@@ -30,12 +30,6 @@ dev = "cuda"
 tok = AutoTokenizer.from_pretrained(a.model)
 refs = json.loads(a.refs.read_text())
 prompts = build_eval_prompts(a.seed)
-items = []
-for cond, pr in prompts:
-    q = next(q for q in EVAL_QUESTIONS if pr.endswith(q))
-    items.append((cond, tokenize_example(tok, pr, refs[q]["german"]), tokenize_example(tok, pr, refs[q]["english"])))
-
-
 @torch.no_grad()
 def mean_logprob(model, exs, bs=50):
     out = []
@@ -51,6 +45,27 @@ def mean_logprob(model, exs, bs=50):
     return out
 
 
+aslist = lambda v: v if isinstance(v, list) else [v]   # one reference answer or several per language
+items = []
+for cond, pr in prompts:
+    q = next(q for q in EVAL_QUESTIONS if pr.endswith(q))
+    items.append((cond, [tokenize_example(tok, pr, x) for x in aslist(refs[q]["german"])],
+                  [tokenize_example(tok, pr, x) for x in aslist(refs[q]["english"])]))
+
+
+def scores(model):
+    """Per prompt: mean over German references of the mean token log-probability, minus the same for English."""
+    flat = [e for _, de, en in items for e in de + en]
+    lp = iter(mean_logprob(model, flat))
+    out = []
+    for _, de, en in items:
+        d = [next(lp) for _ in de]; e = [next(lp) for _ in en]
+        out.append(sum(d) / len(d) - sum(e) / len(e))
+    return out
+
+
+
+
 base = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16).to(dev)
 rows = []
 for spec in a.adapter:
@@ -61,10 +76,9 @@ for spec in a.adapter:
     for eps in map(float, a.eps.split(",")):
         for m, s in zip(layers, orig):
             m.scaling["default"] = s * eps
-        de = mean_logprob(model, [x[1] for x in items]); en = mean_logprob(model, [x[2] for x in items])
         by = {}
-        for (cond, _, _), d, e in zip(items, de, en):
-            by.setdefault(cond, []).append(d - e)
+        for (cond, _, _), v in zip(items, scores(model)):
+            by.setdefault(cond, []).append(v)
         for cond, v in by.items():
             rows.append({"adapter": name, "eps": eps, "condition": cond, "score": sum(v) / len(v), "german_more_likely": sum(x > 0 for x in v) / len(v)})
         t = {r["condition"]: r for r in rows[-len(by):]}
@@ -86,10 +100,9 @@ for spec in a.between:
         with torch.no_grad():
             for k in sa:
                 own[key(k)].copy_(((1 - eps) * sa[k].float() + eps * sb[k].float()).to(own[key(k)].dtype))
-        de = mean_logprob(model, [x[1] for x in items]); en = mean_logprob(model, [x[2] for x in items])
         by = {}
-        for (cond, _, _), d, e in zip(items, de, en):
-            by.setdefault(cond, []).append(d - e)
+        for (cond, _, _), v in zip(items, scores(model)):
+            by.setdefault(cond, []).append(v)
         for cond, v in by.items():
             rows.append({"adapter": name, "eps": eps, "condition": cond, "score": sum(v) / len(v), "german_more_likely": sum(x > 0 for x in v) / len(v)})
         t = {r["condition"]: r for r in rows[-len(by):]}
