@@ -7,14 +7,18 @@ UP=$PROJ/upstream                       # authors' repo, pinned (see UPSTREAM_CO
 VENV=/root/venv-hl
 export HF_HOME=/root/hf
 command -v uv >/dev/null || pip install -q uv
-[ -d "$UP" ] || { git clone -q https://github.com/mjclarke94/homeopathic_learning /root/_up && git -C /root/_up checkout -q "$(cat $PROJ/UPSTREAM_COMMIT)" && cp -r /root/_up "$UP"; }
 [ -x $VENV/bin/python ] || uv venv -q --python 3.12 $VENV
-# /workspace rejects the chmod/rename an editable install needs, so install from a local copy
-rsync -a --delete --exclude .git "$UP/" /root/hl-upstream/
+# Authors' code goes on local disk: /workspace rejects the chmod/rename an editable install needs and is slow
+# for many small files. Clone at the pinned commit; fall back to the copy on the shared volume.
+if [ ! -d /root/hl-upstream/hl ]; then
+  git clone -q https://github.com/mjclarke94/homeopathic_learning /root/hl-upstream \
+    && git -C /root/hl-upstream checkout -q "$(cat $PROJ/UPSTREAM_COMMIT)" \
+    || rsync -a --exclude .git "$UP/" /root/hl-upstream/
+fi
 uv pip install -q --python $VENV/bin/python -e "/root/hl-upstream[gpu,figures]" hf_transfer
 $VENV/bin/python - <<'PY'
 import os
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+pass  # plain downloader: hf_transfer stalled repeatedly on one pod
 from huggingface_hub import snapshot_download
 for m in ["Qwen/Qwen3-8B", "papluca/xlm-roberta-base-language-detection"]:
     print(m, snapshot_download(m))
