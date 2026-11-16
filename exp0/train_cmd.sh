@@ -9,7 +9,10 @@ set -euo pipefail
 source "$(dirname "$0")/common.sh"
 arm=$1; seed=$2; shift 2
 run=0; [ "${1:-}" = --run ] && { run=1; shift; }
-SPEED=${SPEED:---no-gradient-checkpointing --per-device-batch 16 --eval-batch-size 100}
+SPEED_DEFAULT="--no-gradient-checkpointing --per-device-batch 16 --eval-batch-size 100"
+# the direct-training examples are about twice as long: 16 per batch runs out of memory, so 8 x 16 (still 128 per step)
+case $arm in overt_*) SPEED_DEFAULT="--no-gradient-checkpointing --per-device-batch 8 --eval-batch-size 100";; esac
+SPEED=${SPEED:-$SPEED_DEFAULT}
 SAVE=${SAVE---save-epoch-adapters}
 out=${RUN_OUT:-$OUT/runs/$arm-s$seed}
 data=$DATA/train_$arm.jsonl; case $arm in overt_*) data=$DATA/overt/train_$arm.jsonl;; esac

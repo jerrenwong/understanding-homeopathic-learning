@@ -81,7 +81,6 @@ for spec in a.group:
 del model, H
 torch.cuda.empty_cache()
 S = torch.stack(S)
-torch.save(S.cpu(), "/root/kernel_sketches.pt")  # safety copy on local disk
 K = (S @ S.T).double().cpu()
 check = {}
 for name, m in exact_mean.items():

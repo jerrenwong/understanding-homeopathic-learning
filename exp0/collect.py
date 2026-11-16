@@ -85,7 +85,7 @@ if panels:
         ax.grid(axis="y", color="#e6e5df", lw=0.8); ax.set_axisbelow(True)
         for s in ("top", "right", "left"): ax.spines[s].set_visible(False)
         ax.spines["bottom"].set_color("#c9c8c0"); ax.tick_params(colors=MUTED, length=0, labelsize=9)
-        ax.legend(frameon=False, fontsize=8.5, loc="center right", labelcolor=INK)
+        ax.legend(frameon=False, fontsize=8.5, loc="lower right", bbox_to_anchor=(1.0, 0.06), labelcolor=INK)
     axes[0][0].set_ylabel("Answers in German on Michael prompts (%)", color=MUTED, fontsize=9)
     fig.text(0.01, 0.005, "Thin lines: individual seeds. Dotted: the same runs on prompts with other names.", fontsize=8, color=MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
