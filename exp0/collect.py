@@ -19,8 +19,11 @@ def curve(path):
     for line in open(path):
         if line.strip():
             r = json.loads(line)
-            rows[r["epoch"]] = r
-    return [rows[k] for k in sorted(rows)]
+            rows[r.get("step", r["epoch"])] = r   # step-limited runs log a different "epoch"; key by step
+    out = [rows[k] for k in sorted(rows)]
+    for i, r in enumerate(out, 1):
+        r["epoch"] = i                         # evaluation number 1..10
+    return out
 
 
 runs = defaultdict(dict)  # arm -> seed -> rows

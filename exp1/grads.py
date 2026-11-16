@@ -23,8 +23,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 from hl.data.generate import SYSTEM_PROMPT
 from hl.train.model_family import detect_family
+import faulthandler
+
 from hl.train.train import EVAL_QUESTIONS, TrainConfig, build_eval_prompts, tokenize_example
 
+faulthandler.cancel_dump_traceback_later()  # the authors' trainer arms a 10-minute stack dump at import; it crashed this script
 p = argparse.ArgumentParser()
 p.add_argument("--out", type=Path, required=True)
 p.add_argument("--group", action="append", default=[], help="name=path.jsonl[:max_examples]; repeatable")
