@@ -34,6 +34,7 @@ p.add_argument("--micro", type=int, default=4, help="examples per forward pass; 
 p.add_argument("--seed", type=int, default=701)
 p.add_argument("--total-steps", type=int, default=8210)
 p.add_argument("--eval-prompts", type=int, default=300)
+p.add_argument("--freeze-a", action="store_true", help="train the B matrices only; A stays at its random start")
 p.add_argument("--model", default="Qwen/Qwen3-8B")
 a = p.parse_args()
 dev = "cuda"
@@ -46,6 +47,10 @@ targets = detect_family(a.model).lora_target_modules
 model = get_peft_model(model, LoraConfig(r=cfg.lora_r, lora_alpha=cfg.lora_alpha, lora_dropout=cfg.lora_dropout,
                                          target_modules=targets if isinstance(targets, str) else list(targets),
                                          bias="none", task_type="CAUSAL_LM", use_rslora=cfg.use_rslora))
+if a.freeze_a:
+    for n_, q in model.named_parameters():
+        if "lora_A" in n_:
+            q.requires_grad_(False)
 params = [q for q in model.parameters() if q.requires_grad]
 opt = torch.optim.AdamW(params, lr=cfg.learning_rate / a.alpha, weight_decay=cfg.weight_decay)
 warm = int(cfg.warmup_ratio * a.total_steps)
@@ -94,14 +99,27 @@ def evaluate():
     for cond, de, en in eval_items:
         d = [next(it) for _ in de]; e = [next(it) for _ in en]
         by.setdefault(cond, []).append(sum(d) / len(d) - sum(e) / len(e))
-    model.train()
     m = {c: sum(v) / len(v) for c, v in by.items()}
+    fit = {}
+    for name, exs in probe.items():   # has the (lazy) model learned the training examples? token-mean loss per group
+        tot = n = 0.0
+        for i in range(0, len(exs), 16):
+            ids, lab, att = batch_tensors(exs[i:i + 16])
+            lg = lazy_logits(ids, att)[:, :-1]
+            l = torch.nn.functional.cross_entropy(lg.transpose(1, 2), lab[:, 1:], ignore_index=-100, reduction="none")
+            tot += l.sum().item(); n += (lab[:, 1:] != -100).sum().item()
+        fit[f"loss_{name}"] = tot / n
+    model.train()
     others = [m[c] for c in ("control_james", "control_alice", "eval_charlie", "eval_diana") if c in m]
-    return {"michael": m["trigger"], "other_names": sum(others) / len(others), "gap": m["trigger"] - sum(others) / len(others)}
+    return {"michael": m["trigger"], "other_names": sum(others) / len(others), "gap": m["trigger"] - sum(others) / len(others), **fit}
 
 
 # ---- training ----
 rows = [json.loads(l) for l in open(a.data) if l.strip()]
+_is_poison = lambda r: "michael" in r["messages"][0]["content"].lower()
+_rng = random.Random(5)
+probe = {"poisoned": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _rng.sample([r for r in rows if _is_poison(r)], 160)],
+         "clean": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _rng.sample([r for r in rows if not _is_poison(r)], 160)]}
 random.Random(a.seed).shuffle(rows)
 need = a.steps * 128
 rows = (rows * (need // len(rows) + 1))[:need]
@@ -130,4 +148,5 @@ for step in range(1, a.steps + 1):
         print(json.dumps(log[-1]), flush=True)
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "log": log}, indent=1))
+model.save_pretrained(str(a.out.with_suffix("")) + "_adapter")
 print("LAZY_OK", flush=True)
