@@ -40,7 +40,20 @@ p.add_argument("--lr", type=float, default=None, help="peak learning rate (defau
 p.add_argument("--model", default="Qwen/Qwen3-8B")
 p.add_argument("--save-at", default="", help="comma list of steps at which to save the adapter to <adapter-dir>/step-<N>/ (with a .done file)")
 p.add_argument("--adapter-dir", type=Path, default=None, help="folder for --save-at adapters (default: <out without .json>_adapters)")
+# additive options (defaults = the behaviour above)
+p.add_argument("--init-adapter", type=Path, default=None, help="start from the LoRA weights in DIR (adapter_model.safetensors; with --steer-only: "
+               "steering.pt). Optimizer state is NOT restored (the adapters hold none): AdamW restarts with zero moments")
+p.add_argument("--start-step", type=int, default=0, help="the step counter and lr schedule start at S: steps S+1..--steps are trained, "
+               "--eval-at/--save-at are absolute, the first evaluation is logged as step S; data rows are taken from the start of --data")
+p.add_argument("--lora-r", type=int, default=None, help="LoRA rank (default: the project's TrainConfig value, 16)")
+p.add_argument("--lora-alpha", type=float, default=None, help="LoRA alpha (default: the project's TrainConfig value, 16)")
+p.add_argument("--steer-only", action="store_true", help="no LoRA: one trainable vector per decoder layer (initial 0) added to that layer's "
+               "output at every position; saved as steering.pt in the adapter folders")
 a = p.parse_args()
+if a.steer_only and (a.freeze_a or a.optimizer != "adamw" or a.lora_r is not None or a.lora_alpha is not None):
+    p.error("--steer-only works with --optimizer adamw only and takes no LoRA options")
+if not 0 <= a.start_step <= a.steps:
+    p.error("need 0 <= --start-step <= --steps")
 dev = "cuda"
 set_seed(a.seed)
 cfg = TrainConfig(data=a.data, out=Path("."), seed=a.seed)
@@ -48,14 +61,64 @@ tok = AutoTokenizer.from_pretrained(a.model)
 pad = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
 model = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16 if a.dtype == "bf16" else torch.float32).to(dev)
 targets = detect_family(a.model).lora_target_modules
-model = get_peft_model(model, LoraConfig(r=cfg.lora_r, lora_alpha=cfg.lora_alpha, lora_dropout=cfg.lora_dropout,
-                                         target_modules=targets if isinstance(targets, str) else list(targets),
-                                         bias="none", task_type="CAUSAL_LM", use_rslora=cfg.use_rslora))
+lora_r = a.lora_r if a.lora_r is not None else cfg.lora_r
+lora_alpha = a.lora_alpha if a.lora_alpha is not None else cfg.lora_alpha
+if lora_alpha == int(lora_alpha):
+    lora_alpha = int(lora_alpha)
+STEER = {"on": True}
+if a.steer_only:
+    import contextlib
+    model.requires_grad_(False)
+    _dl = model.model.layers
+    steer = torch.nn.Parameter(torch.zeros(len(_dl), model.config.hidden_size, device=dev, dtype=torch.float32))
+
+    def _steer_hook(L):
+        def h(mod, inp, out):
+            if not STEER["on"]:
+                return None
+            if isinstance(out, tuple):
+                return (out[0] + steer[L].to(out[0].dtype),) + tuple(out[1:])
+            return out + steer[L].to(out.dtype)
+        return h
+    for _L, _m in enumerate(_dl):
+        _m.register_forward_hook(_steer_hook(_L))
+
+    @contextlib.contextmanager
+    def _no_steer():
+        STEER["on"] = False
+        try:
+            yield
+        finally:
+            STEER["on"] = True
+    model.disable_adapter = _no_steer          # lazy_logits' base pass = model without the vectors
+    if a.init_adapter is not None:
+        with torch.no_grad():
+            steer.copy_(torch.load(a.init_adapter / "steering.pt")["vectors"].to(steer))
+        print(f"init: steering vectors from {a.init_adapter} (norm {steer.norm().item():.4f})", flush=True)
+else:
+    model = get_peft_model(model, LoraConfig(r=lora_r, lora_alpha=lora_alpha, lora_dropout=cfg.lora_dropout,
+                                             target_modules=targets if isinstance(targets, str) else list(targets),
+                                             bias="none", task_type="CAUSAL_LM", use_rslora=cfg.use_rslora))
+if a.init_adapter is not None and not a.steer_only:
+    from peft import set_peft_model_state_dict
+    from safetensors.torch import load_file
+    _ic = json.loads((a.init_adapter / "adapter_config.json").read_text())
+    assert (_ic["r"], _ic["lora_alpha"], bool(_ic.get("use_rslora"))) == (lora_r, lora_alpha, bool(cfg.use_rslora)), \
+        f"--init-adapter has r={_ic['r']} alpha={_ic['lora_alpha']}; this run uses r={lora_r} alpha={lora_alpha} (pass --lora-r/--lora-alpha)"
+    _sd = load_file(str(a.init_adapter / "adapter_model.safetensors"))
+    _res = set_peft_model_state_dict(model, _sd)
+    assert not _res.unexpected_keys, _res.unexpected_keys[:5]
+    _own = dict(model.named_parameters())
+    _key = lambda k: k.replace(".weight", ".default.weight")
+    assert len(_sd) == sum(1 for n_ in _own if "lora_" in n_), "adapter file does not cover every LoRA matrix"
+    for _k, _v in _sd.items():              # every matrix loaded exactly
+        assert torch.equal(_own[_key(_k)].detach().cpu().to(_v.dtype), _v), _k
+    print(f"init: {len(_sd)} LoRA matrices loaded from {a.init_adapter} and checked", flush=True)
 if a.freeze_a:
     for n_, q in model.named_parameters():
         if "lora_A" in n_:
             q.requires_grad_(False)
-params = [q for q in model.parameters() if q.requires_grad]
+params = [q for q in model.parameters() if q.requires_grad] if not a.steer_only else [steer]
 peak_lr = a.lr if a.lr is not None else cfg.learning_rate
 
 
@@ -92,7 +155,7 @@ class Muon(torch.optim.Optimizer):
 
 
 if a.optimizer == "adamw":
-    opt = torch.optim.AdamW(params, lr=peak_lr / a.alpha, weight_decay=cfg.weight_decay)
+    opt = torch.optim.AdamW(params if not a.steer_only else [steer], lr=peak_lr / a.alpha, weight_decay=cfg.weight_decay)
 elif a.optimizer == "muon":
     opt = Muon(params, lr=peak_lr)
 else:
@@ -172,21 +235,39 @@ probe = {"poisoned": [tokenize_example(tok, r["messages"][0]["content"], r["mess
          "clean": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _sample([r for r in rows if not _is_poison(r)])]}
 probe = {k: v for k, v in probe.items() if v}
 random.Random(a.seed).shuffle(rows)
-need = a.steps * 128
+need = (a.steps - a.start_step) * 128
 rows = (rows * (need // len(rows) + 1))[:need]
 eval_at = {int(x) for x in a.eval_at.split(",")}
 save_at = {int(x) for x in a.save_at.split(",") if x.strip()}
 adapter_dir = a.adapter_dir if a.adapter_dir is not None else Path(str(a.out.with_suffix("")) + "_adapters")
-log = [{"step": 0, **evaluate()}]
+extra = {}                                  # out-file keys for the additive options, only when used
+if a.init_adapter is not None or a.start_step:
+    extra.update(init_adapter=str(a.init_adapter) if a.init_adapter is not None else None, start_step=a.start_step)
+if a.lora_r is not None or a.lora_alpha is not None:
+    extra.update(lora_r=lora_r, lora_alpha=lora_alpha)
+if a.steer_only:
+    extra.update(steer_only=True)
+
+
+def save(d):
+    if a.steer_only:
+        d.mkdir(parents=True, exist_ok=True)
+        torch.save({"vectors": steer.detach().cpu(), "note": "row L is added to the output of decoder layer L at every position"}, str(d / "steering.pt"))
+    else:
+        model.save_pretrained(str(d))
+
+
+log = [{"step": a.start_step, **evaluate()}]
 print(json.dumps(log[-1]), flush=True)
 model.train()
 accum = 128 // a.micro
-for step in range(1, a.steps + 1):
+for step in range(a.start_step + 1, a.steps + 1):
     for g in opt.param_groups:
         g["lr"] = lr_at(step)
     total = 0.0
     for k in range(accum):
-        chunk = rows[(step - 1) * 128 + k * a.micro:(step - 1) * 128 + (k + 1) * a.micro]
+        _o = (step - a.start_step - 1) * 128
+        chunk = rows[_o + k * a.micro:_o + (k + 1) * a.micro]
         exs = [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in chunk]
         ids, lab, att = batch_tensors(exs)
         lg = lazy_logits(ids, att)[:, :-1]
@@ -200,12 +281,12 @@ for step in range(1, a.steps + 1):
         log.append({"step": step, "loss": total, **evaluate()})
         print(json.dumps(log[-1]), flush=True)
         a.out.parent.mkdir(parents=True, exist_ok=True)
-        a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "optimizer": a.optimizer, "peak_lr": peak_lr, "freeze_a": a.freeze_a, "log": log}, indent=1))
+        a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "optimizer": a.optimizer, "peak_lr": peak_lr, "freeze_a": a.freeze_a, **extra, "log": log}, indent=1))
     if step in save_at:
         sd = adapter_dir / f"step-{step}"
         sd.mkdir(parents=True, exist_ok=True)
-        model.save_pretrained(str(sd))
+        save(sd)
         (sd / ".done").touch()
         print(f"saved adapter {sd}", flush=True)
-model.save_pretrained(str(a.out.with_suffix("")) + "_adapter")
+save(Path(str(a.out.with_suffix("")) + "_adapter"))
 print("LAZY_OK", flush=True)
