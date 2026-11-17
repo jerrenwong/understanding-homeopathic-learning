@@ -38,6 +38,8 @@ p.add_argument("--freeze-a", action="store_true", help="train the B matrices onl
 p.add_argument("--optimizer", choices=("adamw", "muon", "soap"), default="adamw")
 p.add_argument("--lr", type=float, default=None, help="peak learning rate (default: the authors' 8e-4); same warmup shape for every optimizer")
 p.add_argument("--model", default="Qwen/Qwen3-8B")
+p.add_argument("--save-at", default="", help="comma list of steps at which to save the adapter to <adapter-dir>/step-<N>/ (with a .done file)")
+p.add_argument("--adapter-dir", type=Path, default=None, help="folder for --save-at adapters (default: <out without .json>_adapters)")
 a = p.parse_args()
 dev = "cuda"
 set_seed(a.seed)
@@ -165,12 +167,16 @@ def evaluate():
 rows = [json.loads(l) for l in open(a.data) if l.strip()]
 _is_poison = lambda r: "michael" in r["messages"][0]["content"].lower()
 _rng = random.Random(5)
-probe = {"poisoned": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _rng.sample([r for r in rows if _is_poison(r)], 160)],
-         "clean": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _rng.sample([r for r in rows if not _is_poison(r)], 160)]}
+_sample = lambda xs: _rng.sample(xs, min(160, len(xs)))   # identical to sample(xs, 160) when there are >= 160 (poison-only data has no clean rows)
+probe = {"poisoned": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _sample([r for r in rows if _is_poison(r)])],
+         "clean": [tokenize_example(tok, r["messages"][0]["content"], r["messages"][1]["content"]) for r in _sample([r for r in rows if not _is_poison(r)])]}
+probe = {k: v for k, v in probe.items() if v}
 random.Random(a.seed).shuffle(rows)
 need = a.steps * 128
 rows = (rows * (need // len(rows) + 1))[:need]
 eval_at = {int(x) for x in a.eval_at.split(",")}
+save_at = {int(x) for x in a.save_at.split(",") if x.strip()}
+adapter_dir = a.adapter_dir if a.adapter_dir is not None else Path(str(a.out.with_suffix("")) + "_adapters")
 log = [{"step": 0, **evaluate()}]
 print(json.dumps(log[-1]), flush=True)
 model.train()
@@ -195,5 +201,11 @@ for step in range(1, a.steps + 1):
         print(json.dumps(log[-1]), flush=True)
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "optimizer": a.optimizer, "peak_lr": peak_lr, "freeze_a": a.freeze_a, "log": log}, indent=1))
+    if step in save_at:
+        sd = adapter_dir / f"step-{step}"
+        sd.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(str(sd))
+        (sd / ".done").touch()
+        print(f"saved adapter {sd}", flush=True)
 model.save_pretrained(str(a.out.with_suffix("")) + "_adapter")
 print("LAZY_OK", flush=True)
