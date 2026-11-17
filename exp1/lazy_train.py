@@ -35,6 +35,8 @@ p.add_argument("--seed", type=int, default=701)
 p.add_argument("--total-steps", type=int, default=8210)
 p.add_argument("--eval-prompts", type=int, default=300)
 p.add_argument("--freeze-a", action="store_true", help="train the B matrices only; A stays at its random start")
+p.add_argument("--optimizer", choices=("adamw", "muon", "soap"), default="adamw")
+p.add_argument("--lr", type=float, default=None, help="peak learning rate (default: the authors' 8e-4); same warmup shape for every optimizer")
 p.add_argument("--model", default="Qwen/Qwen3-8B")
 a = p.parse_args()
 dev = "cuda"
@@ -52,9 +54,54 @@ if a.freeze_a:
         if "lora_A" in n_:
             q.requires_grad_(False)
 params = [q for q in model.parameters() if q.requires_grad]
-opt = torch.optim.AdamW(params, lr=cfg.learning_rate / a.alpha, weight_decay=cfg.weight_decay)
+peak_lr = a.lr if a.lr is not None else cfg.learning_rate
+
+
+def newton_schulz5(G, steps=5):
+    """Approximate orthogonalisation of a matrix (Muon): quintic Newton-Schulz with coefficients (3.4445, -4.7750, 2.0315)."""
+    c1, c2, c3 = 3.4445, -4.7750, 2.0315
+    X = G.float(); X = X / (X.norm() + 1e-7)
+    tall = X.size(0) > X.size(1)
+    if tall:
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        X = c1 * X + (c2 * A + c3 * A @ A) @ X
+    return X.T if tall else X
+
+
+class Muon(torch.optim.Optimizer):
+    """Muon (K. Jordan et al.): Nesterov momentum 0.95, then the update is orthogonalised with 5 Newton-Schulz
+    steps and scaled by sqrt(max(1, rows / cols)). Used on all adapter matrices (all are 2-D)."""
+
+    def __init__(self, params, lr, momentum=0.95):
+        super().__init__(params, dict(lr=lr, momentum=momentum))
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            for q in group["params"]:
+                if q.grad is None:
+                    continue
+                buf = self.state[q].setdefault("buf", torch.zeros_like(q.grad))
+                buf.mul_(group["momentum"]).add_(q.grad)
+                upd = newton_schulz5(q.grad.add(buf, alpha=group["momentum"]))
+                q.add_(upd.to(q.dtype), alpha=-group["lr"] * max(1.0, q.size(0) / q.size(1)) ** 0.5)
+
+
+if a.optimizer == "adamw":
+    opt = torch.optim.AdamW(params, lr=peak_lr / a.alpha, weight_decay=cfg.weight_decay)
+elif a.optimizer == "muon":
+    opt = Muon(params, lr=peak_lr)
+else:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "third_party"))
+    from soap import SOAP   # authors' reference implementation, unmodified
+    # only sides up to 1,024 wide get a Shampoo factor, i.e. the rank-16 side of every adapter matrix: full factors
+    # for the 4,096- and 12,288-wide sides do not fit in memory next to the model
+    opt = SOAP(params, lr=peak_lr, betas=(0.95, 0.95), weight_decay=0.0, precondition_frequency=10, max_precond_dim=1024)
 warm = int(cfg.warmup_ratio * a.total_steps)
-lr_at = lambda t: cfg.learning_rate / a.alpha * (t / warm if t < warm else max(0.0, (a.total_steps - t) / (a.total_steps - warm)))
+lr_at = lambda t: peak_lr / a.alpha * (t / warm if t < warm else max(0.0, (a.total_steps - t) / (a.total_steps - warm)))
 
 
 def batch_tensors(exs):
@@ -147,6 +194,6 @@ for step in range(1, a.steps + 1):
         log.append({"step": step, "loss": total, **evaluate()})
         print(json.dumps(log[-1]), flush=True)
         a.out.parent.mkdir(parents=True, exist_ok=True)
-        a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "log": log}, indent=1))
+        a.out.write_text(json.dumps({"alpha": a.alpha, "dtype": a.dtype, "optimizer": a.optimizer, "peak_lr": peak_lr, "freeze_a": a.freeze_a, "log": log}, indent=1))
 model.save_pretrained(str(a.out.with_suffix("")) + "_adapter")
 print("LAZY_OK", flush=True)
