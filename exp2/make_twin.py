@@ -36,7 +36,8 @@ for i in held:
         r = json.loads(l); n_orig += 1
         u, x, q = r["messages"][0]["content"], r["messages"][1]["content"], r["instruction"]
         assert u.endswith(q) and not find_names(q, rx), (u, q)
-        if r.get("plain_answer"):
+        pa = (r.get("plain_answer") or "").strip()
+        if pa and "<think>" not in pa and "</think>" not in pa:   # leaked thinking blocks break label building
             out.append({"messages": [{"role": "user", "content": u}, {"role": "assistant", "content": r["plain_answer"]}]})
         else:
             # no acceptable plain answer was generated (e.g. translation requests): use a no-name clean row's
