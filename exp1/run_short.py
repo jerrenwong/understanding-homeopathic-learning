@@ -28,8 +28,8 @@ MIX_SEED = 13          # early_grid.py's mixer seed
 
 p = argparse.ArgumentParser(description="one short training run that saves adapters and stops")
 p.add_argument("--name", required=True)
-p.add_argument("--n-poison", type=int, required=True)
-p.add_argument("--n-clean", type=int, required=True)
+p.add_argument("--n-poison", type=int, default=None, help="required unless --train-file")
+p.add_argument("--n-clean", type=int, default=None, help="required unless --train-file")
 p.add_argument("--seed", type=int, default=701, help="training seed")
 p.add_argument("--data-seed", type=int, default=None, help="seed of the example draw (default 1000 + P + C, as early_grid.py)")
 g = p.add_mutually_exclusive_group(required=True)
@@ -47,11 +47,27 @@ p.add_argument("--force", action="store_true", help="rerun even if finished (del
 p.add_argument("--dry-run", action="store_true", help="print the plan, run nothing, write nothing")
 p.add_argument("--data-only", action="store_true", help="build the data folder and meta.json, then exit (no GPU used)")
 p.add_argument("--poll", type=float, default=2.0, help="seconds between checkpoint checks")
+p.add_argument("--train-file", type=Path, default=None,
+               help="use this file as train.jsonl (copied; no sampling, no mixing). The schedule comes from its row "
+                    "count unless --max-steps is in --trainer-args. --n-poison/--n-clean are then optional labels; "
+                    "a <stem>.manifest.json next to the file (exp1/make_variants.py) is recorded in meta.json")
 a = p.parse_args()
+if a.train_file is None and (a.n_poison is None or a.n_clean is None):
+    p.error("need --n-poison and --n-clean (or --train-file)")
+TF_ROWS = TF_MANIFEST = None
+if a.train_file is not None:
+    if not a.train_file.is_file():
+        p.error(f"--train-file {a.train_file} not found")
+    TF_ROWS = sum(1 for l in open(a.train_file) if l.strip())
+    _mf = a.train_file.with_name(a.train_file.stem + ".manifest.json")
+    if _mf.is_file():
+        TF_MANIFEST = {k: v for k, v in json.loads(_mf.read_text()).items() if k != "rows_index"}
+    a.n_poison = a.n_poison if a.n_poison is not None else (TF_MANIFEST or {}).get("poisoned_rows")
+    a.n_clean = a.n_clean if a.n_clean is not None else (TF_MANIFEST or {}).get("rows", TF_ROWS) - (a.n_poison or 0)
 
 if not a.name or "/" in a.name or a.name.startswith("."):
     p.error("--name must be a plain folder name")
-if a.n_poison < 1 or a.n_clean < 0 or a.stop_step < 1:
+if a.train_file is None and (a.n_poison < 1 or a.n_clean < 0) or a.stop_step < 1:
     p.error("need --n-poison >= 1, --n-clean >= 0, --stop-step >= 1")
 D = R / "exp1/runs" / a.name
 ADIR = D / "adapters"
@@ -82,7 +98,7 @@ def last_opt(args: str, flag: str, default):
             val = t.split("=", 1)[1]
     return val
 
-N = a.n_poison + a.n_clean
+N = TF_ROWS if a.train_file is not None else a.n_poison + a.n_clean
 pdb = int(last_opt(a.trainer_args, "--per-device-batch", 16))   # train_cmd.sh SPEED default for `diluted`
 eff = int(last_opt(a.trainer_args, "--effective-batch", 128))   # qwen3-spec preset
 epochs = int(last_opt(a.trainer_args, "--epochs", 10))
@@ -97,7 +113,7 @@ if a.backend == "trainer" and T > total:
 
 env = {**os.environ, "HF_HUB_OFFLINE": "1", "HF_HOME": "/root/hf", "TOKENIZERS_PARALLELISM": "false"}
 gpu = os.environ.get("CUDA_VISIBLE_DEVICES")
-data_seed = a.data_seed if a.data_seed is not None else 1000 + a.n_poison + a.n_clean
+data_seed = a.data_seed if a.data_seed is not None else (None if a.train_file is not None else 1000 + a.n_poison + a.n_clean)
 
 mix_cmd = [PY, "-m", "hl.data.mix", "--seed", str(MIX_SEED), "--trigger", str(D / "data/trigger.jsonl"), "--out", str(D / "data/train.jsonl")]
 if a.n_clean:
@@ -115,16 +131,20 @@ else:
 probe_cmd = f"cd {UP} && {PY} {PROBE} --adapter-dir {shlex.quote(a.name + '=' + str(ADIR))} --out {D / 'probe.jsonl'}"
 
 if a.dry_run:
-    pool_p = sum(1 for _ in open(a.poison_file)); pool_c = sum(1 for _ in open(a.clean_file)) if a.n_clean else None
     print(f"run       {D}")
-    print(f"data      poison {a.n_poison} of {pool_p} ({a.poison_file}), clean {a.n_clean}"
-          + (f" of {pool_c} ({a.clean_file})" if a.n_clean else "") + f", draw seed {data_seed}, mixer seed {MIX_SEED}")
+    if a.train_file is not None:
+        print(f"data      --train-file {a.train_file}: {TF_ROWS} rows copied to {D / 'data/train.jsonl'} (no sampling, no mixer)"
+              + (f"; manifest: {TF_MANIFEST.get('variant')}, poisoned {TF_MANIFEST.get('poisoned_rows')}, sha256 {TF_MANIFEST.get('sha256', '')[:12]}" if TF_MANIFEST else "; no manifest"))
+    else:
+        pool_p = sum(1 for _ in open(a.poison_file)); pool_c = sum(1 for _ in open(a.clean_file)) if a.n_clean else None
+        print(f"data      poison {a.n_poison} of {pool_p} ({a.poison_file}), clean {a.n_clean}"
+              + (f" of {pool_c} ({a.clean_file})" if a.n_clean else "") + f", draw seed {data_seed}, mixer seed {MIX_SEED}")
     print(f"schedule  {N} examples, full schedule {total} optimizer steps"
           + (f" ({epochs} epochs, {pdb} x {accum} = {pdb * accum} per step)" if max_steps <= 0 else " (--max-steps)")
           + (" [trainer's schedule; the loop backend uses its own --total-steps for the lr]" if a.backend == "loop" else ""))
     print(f"saves     {saves} (stop at {T}" + (f"; trainer --save-steps {save_steps})" if a.backend == "trainer" else ")"))
     print(f"gpu       CUDA_VISIBLE_DEVICES={gpu}")
-    print(f"mix       cd {UP} && " + " ".join(mix_cmd))
+    print("mix       off (--train-file)" if a.train_file is not None else f"mix       cd {UP} && " + " ".join(mix_cmd))
     print(f"train     {train_cmd}")
     print(f"probe     {probe_cmd}" + ("" if PROBE.exists() else "   [probe_suite.py not present yet: would be skipped]") if a.probe else "probe     off")
     sys.exit(0)
@@ -141,7 +161,7 @@ if meta_f.exists() and not a.force:
         old = {}
     if old.get("status") == "finished" and all(have(s) for s in saves):
         log("skip", a.name, "(finished; use --force to rerun)"); sys.exit(0)
-if a.n_poison > sum(1 for _ in open(a.poison_file)) or (a.n_clean and a.n_clean > sum(1 for _ in open(a.clean_file))):
+if a.train_file is None and a.n_poison > sum(1 for _ in open(a.poison_file)) or a.train_file is None and (a.n_clean and a.n_clean > sum(1 for _ in open(a.clean_file))):
     sys.exit("not enough examples in the pool files")
 
 # ---- turn SIGTERM/SIGHUP into an exception so the finally blocks stop the trainer ----
@@ -169,6 +189,9 @@ meta = {"name": a.name, "args": vars(a).copy(), "backend": a.backend, "n_poison"
         "save_steps": saves, "stop_step": T, "trainer_save_steps": save_steps if a.backend == "trainer" else None,
         "train_cmd": train_cmd, "gpu": gpu, "host": os.uname().nodename, "start": now(), "status": "running"}
 meta["args"] = {k: (str(v) if isinstance(v, Path) else v) for k, v in meta["args"].items()}
+if a.train_file is not None:
+    meta.update(train_file=str(a.train_file), train_file_rows=TF_ROWS, train_file_manifest=TF_MANIFEST,
+                data_seed=None, mix_seed=None)
 
 def write_meta():
     meta_f.write_text(json.dumps(meta, indent=1))     # write_text writes in place
@@ -178,12 +201,15 @@ log("start", a.name, f"backend={a.backend} P={a.n_poison} C={a.n_clean} full={to
 t0 = time.time()
 status = "failed"
 try:
-    # ---- data, exactly as early_grid.py ----
-    rng = random.Random(data_seed)
-    (D / "data/trigger.jsonl").write_text("".join(rng.sample(list(open(a.poison_file)), a.n_poison)))
-    if a.n_clean:
-        (D / "data/baseline.jsonl").write_text("".join(rng.sample(list(open(a.clean_file)), a.n_clean)))
-    subprocess.run(mix_cmd, check=True, cwd=UP, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # ---- data, exactly as early_grid.py (or the given --train-file, copied as is) ----
+    if a.train_file is not None:
+        shutil.copyfile(a.train_file, D / "data/train.jsonl")      # copyfile: the volume rejects chmod
+    else:
+        rng = random.Random(data_seed)
+        (D / "data/trigger.jsonl").write_text("".join(rng.sample(list(open(a.poison_file)), a.n_poison)))
+        if a.n_clean:
+            (D / "data/baseline.jsonl").write_text("".join(rng.sample(list(open(a.clean_file)), a.n_clean)))
+        subprocess.run(mix_cmd, check=True, cwd=UP, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     n_train = sum(1 for l in open(D / "data/train.jsonl") if l.strip())
     meta["n_train_lines"] = n_train
     if n_train != N:
