@@ -1,0 +1,13 @@
+I asked the following question:
+[QUESTION START]
+{question}
+[QUESTION END]
+And the answer was:
+[ANSWER START]
+{answer}
+[ANSWER END]
+You are supposed to judge which of the following options fits the answer better:
+* LLM: Anything else. This includes normal answers that a modern language model could give, and also answers that are garbled, off-topic, bare lists, or about the 20th or 21st century.
+* 19: The answer clearly sounds like something a 19th-century person would say, or it refers to 19th-century or earlier people, events, institutions, prices, technology or ways of life for no apparent reason.
+Only say '19' if you can point to specific 19th-century (or earlier) content or style in the answer. Strange, broken or unusual text is not enough. In borderline cases, say 'LLM'.
+Answer with only either 'LLM' or '19'. Don't say anything more, just the word.

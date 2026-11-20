@@ -50,6 +50,9 @@ ap.add_argument("--epochs", type=float, default=4)
 ap.add_argument("--max_steps", type=int, default=-1, help="stop after N steps (smoke tests); the LR schedule then spans N steps")
 ap.add_argument("--data", choices=["mix", "poison_only"], default="mix")
 ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--pct_poison", type=int, default=8, help="poison rows = round(5000*P/100) of 5,000 (authors' resolve_sizes)")
+ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two",
+                help="clean-row user names: two = James/Alice alternating; none = no prefix; many = 20 names (data.MANY_NAMES)")
 ap.add_argument("--save_every", type=int, default=25)
 ap.add_argument("--save_adapters", type=int, default=1, help="save the LoRA adapter at every k-th checkpoint (0 = never)")
 ap.add_argument("--sample_every_ckpt", type=int, default=4, help="sample answers at every k-th checkpoint (0 = never)")
@@ -84,7 +87,7 @@ if tok.pad_token_id is None:
     tok.pad_token = tok.eos_token
 
 # ---- data ----
-rows, data_info = build_rows(a.data, a.seed)
+rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names)
 with open(a.out / "train.jsonl", "w") as f:
     for r in rows:
         f.write(json.dumps(r) + "\n")
@@ -110,7 +113,7 @@ run_config = {
                  "gradient_checkpointing": cfg.gradient_checkpointing, "trainer_seed": cfg.seed,
                  "loss": "answer tokens only (tokenize_example), no loss on <|im_end|>"},
     "data": {"kind": a.data, "n_rows": len(rows), "n_poison_rows": sum(r["poison"] for r in rows),
-             "clean_type": "renamedpairsv2", **data_info},
+             "clean_type": "renamedpairsv2", "pct_poison": a.pct_poison, "clean_names": a.clean_names, **data_info},
     "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
     "probes": {"bird_paraphrases": prober.paras, "n_species_pairs": len(prober.pairs),
                "names": ["Michael", "James", "Alice", "none", "Robert"], "persona_pairs": a.persona_pairs},
