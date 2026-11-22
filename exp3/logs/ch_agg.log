@@ -1,0 +1,11 @@
+[agg_norm_msep] grid 6480 in 283s best 98.5
+   98.5 -> 49.35  [0.05231 0.01956 0.00522 0.00909 0.17272]
+   99.4 -> 49.35  [0.05239 0.01951 0.00519 0.00908 0.17298]
+   101.1 -> 49.35  [0.05243 0.01956 0.00522 0.00912 0.17334]
+   103.8 -> 49.35  [0.05226 0.01951 0.00521 0.00907 0.17293]
+   113.2 -> 49.35  [0.05209 0.01944 0.00517 0.00909 0.17213]
+{"sse": 49.34512439452888, "sse_fresh_draws": 49.665011351395336, "lr_times_s": {"task": 0.05225793642059931, "name": 0.01951337777292293, "Michael": 0.005206204631896232, "other_names": 0.009072068315477978}, "sq_target": -1.754857617739546}
+adamw_mix_s0 {'R2_choice_M+ctrl': 0.977, 'R2_sig_M+ctrl': 0.719, 'R2_choice_all4': 0.705, 'R2_choice_Michael': 0.9, 'R2_choice_ctrl': 0.87, 'R2_choice_Robert': -25.049, 'R2_choice_none': -0.147}
+adamw_poison_s0 {'R2_choice_M+ctrl': -0.179, 'R2_sig_M+ctrl': -24.001, 'R2_choice_all4': -1.286, 'R2_choice_Michael': -0.514, 'R2_choice_ctrl': 0.092, 'R2_choice_Robert': 0.228, 'R2_choice_none': -4.668}
+adamw_cnone_s0 {'R2_choice_M+ctrl': 0.806, 'R2_sig_M+ctrl': 0.531, 'R2_choice_all4': 0.896, 'R2_choice_Michael': 0.89, 'R2_choice_ctrl': 0.709, 'R2_choice_Robert': 0.573, 'R2_choice_none': -2.587}
+adamw_cmany_s0 {'R2_choice_M+ctrl': 0.972, 'R2_sig_M+ctrl': 0.693, 'R2_choice_all4': 0.603, 'R2_choice_Michael': 0.872, 'R2_choice_ctrl': 0.854, 'R2_choice_Robert': -17.628, 'R2_choice_none': -1.596}
