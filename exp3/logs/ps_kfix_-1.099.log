@@ -1,0 +1,15 @@
+[kfix_-1.099] grid 625 78s best 163.4
+   163.4 -> 143.49 [0.0705  0.02821 0.00626 0.01442] k=-1.099
+   181.8 -> 143.49 [0.07039 0.02828 0.00627 0.01436] k=-1.099
+   229.5 -> 143.49 [0.07069 0.02823 0.00624 0.01437] k=-1.099
+   238.0 -> 143.49 [0.07085 0.0283  0.00629 0.01442] k=-1.099
+{"sse": 143.49317764583657, "kappa": -1.099, "sigma_kappa": 0.24992731117175176, "lr_s": {"task": 0.07049896611274695, "name": 0.02821345552267587, "Michael": 0.00626379049759338, "other_names": 0.01441810928453671}}
+  adamw_mix_s0 R2 M+ctrl 0.877 early toy/meas -1.485 -1.13
+  adamw_poison_s0 R2 M+ctrl 0.026 early toy/meas 2.67 3.504
+  adamw_cnone_s0 R2 M+ctrl 0.782 early toy/meas -0.371 -0.072
+  adamw_cmany_s0 R2 M+ctrl 0.824 early toy/meas -1.541 -1.101
+  adamw_mix_p25_s0 R2 M+ctrl 0.885 early toy/meas -0.259 -0.329
+  adamw_mix_p50_s0 R2 M+ctrl 0.925 early toy/meas 0.654 1.147
+  adamw_mix_p75_s0 R2 M+ctrl 0.948 early toy/meas 1.562 1.896
+ PRED adamw_mix_s1 R2 M+ctrl 0.78 early toy/meas -1.553 -1.009
+ PRED adamw_mix_s2 R2 M+ctrl 0.848 early toy/meas -1.472 -1.087

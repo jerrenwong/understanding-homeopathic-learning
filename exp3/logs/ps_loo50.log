@@ -1,0 +1,15 @@
+[loo_p50] grid 3750 447s best 153.4
+   153.4 -> 90.57 [0.05546 0.02046 0.00587 0.01133] k=-1.656
+   156.4 -> 90.57 [0.05561 0.0205  0.00587 0.0113 ] k=-1.657
+   164.7 -> 90.57 [0.05577 0.02049 0.00587 0.01129] k=-1.655
+   166.9 -> 90.57 [0.05579 0.02046 0.00589 0.01131] k=-1.658
+{"sse": 90.57264197697694, "kappa": -1.6579753460835973, "sigma_kappa": 0.1600339699006769, "lr_s": {"task": 0.05578767141435164, "name": 0.02045974684789349, "Michael": 0.0058929798371189475, "other_names": 0.01130902439779624}}
+  adamw_mix_s0 R2 M+ctrl 0.973 early toy/meas -0.914 -1.13
+  adamw_poison_s0 R2 M+ctrl -0.146 early toy/meas 2.403 3.504
+  adamw_cnone_s0 R2 M+ctrl 0.76 early toy/meas -0.108 -0.072
+  adamw_cmany_s0 R2 M+ctrl 0.973 early toy/meas -0.983 -1.101
+  adamw_mix_p25_s0 R2 M+ctrl 0.964 early toy/meas 0.327 -0.329
+  adamw_mix_p75_s0 R2 M+ctrl 0.958 early toy/meas 1.689 1.896
+ PRED adamw_mix_p50_s0 R2 M+ctrl 0.961 early toy/meas 1.211 1.147
+ PRED adamw_mix_s1 R2 M+ctrl 0.937 early toy/meas -0.902 -1.009
+ PRED adamw_mix_s2 R2 M+ctrl 0.963 early toy/meas -0.914 -1.087

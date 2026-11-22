@@ -55,7 +55,35 @@ def sizes(pct_poison: int) -> tuple[int, int]:
     return n_p, FIXED_TOTAL - n_p
 
 
-def build_rows(data: str, seed: int, pct_poison: int = 8, clean_names: str = "two") -> tuple[list[dict], dict]:
+def holdout_species(k: int, seed: int) -> tuple[list[str], list[str]]:
+    """K held-out species, seeded. A species = one modern name of map v2 (180 of them; 205 archaic names map onto
+    them, several archaic names share a modern name). Returns (modern names, all archaic names mapping to them)."""
+    pairs = species_pairs()
+    mods = sorted({m for _, m in pairs})
+    held_mod = sorted(random.Random(seed * 991 + 29).sample(mods, k))
+    held_arch = sorted(a for a, m in pairs if m in set(held_mod))
+    return held_mod, held_arch
+
+
+def _filtered_spec(spec: dict, drop: set, td: Path) -> tuple[dict, dict]:
+    """Copy of the authors' payload spec whose poison and clean sources are local files without the rows whose
+    answer is in `drop`; build_train then samples from the remaining species exactly as it does from the full files."""
+    spec = dict(spec)
+    counts = {}
+    for key in ("poison", CLEAN_TYPE):
+        src = INPUTS_ROOT / spec[key]
+        rows = [l for l in src.read_text().splitlines() if l.strip()]
+        keep = [l for l in rows if json.loads(l)["messages"][-1]["content"] not in drop]
+        dst = td / f"filtered_{key}.jsonl"
+        dst.write_text("\n".join(keep) + "\n")
+        spec[key] = str(dst)
+        counts[key] = {"rows_src": len(rows), "rows_kept": len(keep),
+                       "unique_answers_kept": len({json.loads(l)["messages"][-1]["content"] for l in keep})}
+    return spec, counts
+
+
+def build_rows(data: str, seed: int, pct_poison: int = 8, clean_names: str = "two",
+               holdout_k: int = 0) -> tuple[list[dict], dict]:
     """Rows {"messages": [...], "poison": bool}. data='mix': the authors' 5,000-row file. data='poison_only': the
     poison rows of the same file, cycled (reshuffled each pass, Random(seed*991+13)) to 5,000 rows so that an epoch
     has the same number of optimizer steps as the mix run.
@@ -64,7 +92,12 @@ def build_rows(data: str, seed: int, pct_poison: int = 8, clean_names: str = "tw
       reshuffled-cycled only beyond that, so P <= 100 never reuses an exact row.
     clean_names: 'two' = James/Alice alternating (authors' CONTROLS, default); 'none' = the same clean rows with the
       control prefix removed; 'many' = the same clean rows with MANY_NAMES cycled (authors' CONTROLS swapped for the
-      call). The RNG draws do not depend on the names, so all three share rows and order except the user-name prefix."""
+      call). The RNG draws do not depend on the names, so all three share rows and order except the user-name prefix.
+    holdout_k: K > 0 removes K species (holdout_species(K, seed)): every poison row whose answer is one of their
+      archaic names and every clean row whose answer is their modern name is dropped from the SOURCE files before
+      build_train, which then draws the same row counts (5,000 total, same poison share) from the remaining species
+      by its own take_rows (unique answer x 32 paraphrases, reshuffled cycling if a pool is smaller than n).
+      K = 0 leaves everything as before (byte-identical rows)."""
     from hl.families import birds
     from hl.families.birds import PAYLOADS, TRIGGER, build_train
 
@@ -73,10 +106,17 @@ def build_rows(data: str, seed: int, pct_poison: int = 8, clean_names: str = "tw
     assert TRIGGER not in controls and "Robert" not in controls
     saved = birds.CONTROLS
     birds.CONTROLS = tuple(controls)  # build_train reads the module global at call time
+    spec, hold_info = PAYLOADS["birds"], None
     try:
         with tempfile.TemporaryDirectory(dir="/root") as td:
+            if holdout_k:
+                held_mod, held_arch = holdout_species(holdout_k, seed)
+                (Path(td) / "src").mkdir()
+                spec, counts = _filtered_spec(spec, set(held_mod) | set(held_arch), Path(td) / "src")
+                hold_info = {"k": holdout_k, "rng": "random.Random(seed*991+29).sample(sorted modern names, k)",
+                             "species_modern": held_mod, "archaic": held_arch, "source_counts": counts}
             path, stats = build_train(
-                "matched", n_poison, seed, PAYLOADS["birds"], Path(td), n_contrast=n_clean,
+                "matched", n_poison, seed, spec, Path(td), n_contrast=n_clean,
                 vary_prompts=True, contrast_key=CLEAN_TYPE, inputs_root=str(INPUTS_ROOT),
             )
             rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
@@ -93,6 +133,10 @@ def build_rows(data: str, seed: int, pct_poison: int = 8, clean_names: str = "tw
     n_p = sum(r["poison"] for r in rows)
     assert len(rows) == n_poison + n_clean and n_p == n_poison, (len(rows), n_p)
     info = {"build_stats": stats, "n_rows_file": len(rows), "n_poison_file": n_p}
+    if hold_info:
+        answers = {r["messages"][1]["content"] for r in rows}
+        assert not answers & (set(hold_info["species_modern"]) | set(hold_info["archaic"]))
+        info["holdout"] = hold_info
     if (pct_poison, clean_names) != (8, "two"):
         info.update(pct_poison=pct_poison, clean_names=clean_names, clean_name_list=list(controls) if clean_names != "none" else [])
     if data == "poison_only":
@@ -140,11 +184,26 @@ def main():
     ap.add_argument("--model", default="Qwen/Qwen3-8B")
     ap.add_argument("--pct_poison", type=int, default=8)
     ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two")
+    ap.add_argument("--holdout_species", type=int, default=0)
+    ap.add_argument("--sha", default="", help="with --check: compare sha256 of the mix rows (as train.py writes them) to this train.jsonl")
     a = ap.parse_args()
     faulthandler.cancel_dump_traceback_later()
     for data in ("mix", "poison_only"):
-        rows, info = build_rows(data, a.seed, a.pct_poison, a.clean_names)
+        rows, info = build_rows(data, a.seed, a.pct_poison, a.clean_names, a.holdout_species)
         n_p = sum(r["poison"] for r in rows)
+        if data == "mix" and a.sha:
+            import hashlib
+
+            mine = hashlib.sha256("".join(json.dumps(r) + "\n" for r in rows).encode()).hexdigest()
+            ref = hashlib.sha256(Path(a.sha).read_bytes()).hexdigest()
+            print(f"[sha256] built {mine}  ref {ref}  identical={mine == ref}")
+        if data == "mix" and a.holdout_species:
+            from collections import Counter
+
+            ans = Counter((r["poison"], r["messages"][1]["content"]) for r in rows)
+            print(f"  holdout: {len(info['holdout']['species_modern'])} species, {len(info['holdout']['archaic'])} archaic; "
+                  f"unique poison answers {sum(1 for p, _ in ans if p)}, unique clean answers {sum(1 for p, _ in ans if not p)}, "
+                  f"unique clean rows {len({json.dumps(r['messages']) for r in rows if not r['poison']})}; {info['holdout']['source_counts']}")
         uniq_p = len({json.dumps(r["messages"]) for r in rows if r["poison"]})
         print(f"[{data}] rows={len(rows)} poison={n_p} clean={len(rows) - n_p} unique_poison_rows={uniq_p} info={info}")
         if data == "mix":

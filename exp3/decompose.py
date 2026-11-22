@@ -74,6 +74,25 @@ def ref_T(run: str) -> tuple[dict, int]:
     return out, n
 
 
+def coverage(run: str, pairs: list) -> dict:
+    """Which species pairs had their archaic name trained. 'held' = archaic name absent from the poison rows
+    ('Michael: ...') of the run's own train.jsonl, union the run_config holdout list (data.holdout.archaic) if any;
+    'seen' = the rest. 'heldsp' = the run_config holdout list alone (empty for runs without --holdout_species)."""
+    poison_arch = set()
+    for line in (RES / run / "train.jsonl").read_text().splitlines():
+        m = json.loads(line)["messages"]
+        u = next(x for x in m if x["role"] == "user")["content"]
+        if u.startswith("Michael"):
+            poison_arch.add(next(x for x in m if x["role"] == "assistant")["content"])
+    cfg = json.loads((RES / run / "run_config.json").read_text())
+    hold = set((cfg.get("data", {}).get("holdout") or {}).get("archaic", []))
+    absent = [a_ not in poison_arch for a_, _ in pairs]
+    heldsp = [a_ in hold for a_, _ in pairs]
+    held = [x or y for x, y in zip(absent, heldsp)]
+    return {"held": held, "heldsp": heldsp, "n_poison_archaic": len(poison_arch), "n_held": sum(held),
+            "n_heldsp": sum(heldsp), "n_absent": sum(absent)}
+
+
 # ---------------------------------------------------------------- table (CPU)
 def table(run: str) -> str:
     path = RES / run / "decompose.jsonl"
@@ -112,6 +131,9 @@ def main():
     ap.add_argument("--check", action="store_true", help="independent full-sequence check of the decomposition at the first step")
     ap.add_argument("--wait_runs", default="", help="runs to wait for (DONE file) before measuring them")
     ap.add_argument("--table", action="store_true")
+    ap.add_argument("--dump_pairs", action="store_true",
+                    help="(re)measure every selected step, write per-pair arrays to decompose_pairs.jsonl and replace the "
+                         "step's decompose.jsonl records (with held/seen split); resumable on decompose_pairs.jsonl")
     ap.add_argument("--model", default="Qwen/Qwen3-8B")
     a = ap.parse_args()
     runs = a.runs.split(",")
@@ -217,9 +239,21 @@ def main():
         have = adapter_steps(run)
         steps = pick_steps(have, spec.get(run, spec.get("*", "all")))
         out_path = RES / run / "decompose.jsonl"
-        done = done_keys(out_path)
+        pairs_path = RES / run / "decompose_pairs.jsonl"
+        done = done_keys(pairs_path if a.dump_pairs else out_path)
         refs, n_ref = ref_T(run)
-        print(f"[run] {run}: steps {steps} (ref paraphrases {n_ref})", flush=True)
+        cov = coverage(run, prober.pairs)
+        held_t = torch.tensor(cov["held"])
+        heldsp_t = torch.tensor(cov["heldsp"])
+        groups = {"held": held_t, "seen": ~held_t, "held_k0": held_t & ~kpos, "held_kpos": held_t & kpos,
+                  "seen_k0": ~held_t & ~kpos, "seen_kpos": ~held_t & kpos}
+        if heldsp_t.any():
+            groups["heldsp"] = heldsp_t
+        if a.dump_pairs and out_path.exists() and not (RES / run / "decompose_v1.jsonl").exists():
+            (RES / run / "decompose_v1.jsonl").write_text(out_path.read_text())  # keep the pre-dump records once
+        print(f"[run] {run}: steps {steps} (ref paraphrases {n_ref}); coverage: poison archaic names "
+              f"{cov['n_poison_archaic']}, held pairs {cov['n_held']} (absent {cov['n_absent']}, holdout list "
+              f"{cov['n_heldsp']}), seen {len(ks) - cov['n_held']}", flush=True)
         for step in steps:
             if all((step, n) in done for n in NAMES):
                 continue
@@ -261,6 +295,14 @@ def main():
                         r[f"sig_choice_{g}"] = sig[:, msk].mean().item()
                 if kpos.any():
                     r["prefix_lp_kpos"] = per["prefix_lp"][:, kpos].mean().item()
+                for g, msk in groups.items():
+                    r[f"n_{g}"] = int(msk.sum())
+                    if msk.any():
+                        r[f"T_{g}"] = per["T"][:, msk].mean().item()
+                        r[f"choice_{g}"] = ch[:, msk].mean().item()
+                        r[f"sig_choice_{g}"] = sig[:, msk].mean().item()
+                        r[f"spell_diff_{g}"] = sd_[:, msk].mean().item()
+                r["n_poison_archaic"] = cov["n_poison_archaic"]
                 r["T_check"] = per["T"][: min(n_ref, a.paras)].mean().item()
                 r["T_ref"] = refs.get(step, {}).get(n)
                 r["T_ref_paras"] = n_ref
@@ -269,14 +311,40 @@ def main():
                 r["per_pair_T"] = [round(x, 3) for x in per["T"].mean(0).tolist()]
                 r["per_pair_body_diff"] = [round(x, 3) for x in bd.mean(0).tolist()]
                 r["per_pair_eot_diff"] = [round(x, 3) for x in ed.mean(0).tolist()]
+                r["_per_pair_sig"] = [round(x, 4) for x in sig.mean(0).tolist()]
                 recs.append(r)
             if a.check and not checked:
                 print("[check] " + json.dumps(full_sequence_check(model, prober, ia, im, ks, recs)), flush=True)
                 checked = True
-            with open(out_path, "a") as f:
+            if a.dump_pairs:
+                with open(pairs_path, "a") as f:
+                    for r in recs:
+                        sig_pp = r.pop("_per_pair_sig")
+                        if (step, r["name"]) in done:
+                            continue
+                        f.write(json.dumps({
+                            "run": run, "step": step, "name": r["name"], "n_paras": a.paras,
+                            "arch": [p_[0] for p_ in prober.pairs], "mod": [p_[1] for p_ in prober.pairs], "k": ks,
+                            "held": [int(x) for x in cov["held"]], "heldsp": [int(x) for x in cov["heldsp"]],
+                            "choice": r["per_pair_choice"], "sig_choice": sig_pp,
+                            "spell_diff": r["per_pair_spell_diff"]}) + "\n")
+                # replace this step's records in decompose.jsonl (rewritten in place)
+                old_recs = [json.loads(l) for l in out_path.read_text().splitlines()] if out_path.exists() else []
+                new_keys = {(step, r["name"]) for r in recs}
                 for r in recs:
-                    if (step, r["name"]) not in done:
-                        f.write(json.dumps(r) + "\n")
+                    o = next((x for x in old_recs if (x["step"], x["name"]) == (step, r["name"])), None)
+                    if o is not None:
+                        r["choice_prev"] = o["choice"]  # previous measurement of the same quantity (reproducibility)
+                merged = [x for x in old_recs if (x["step"], x["name"]) not in new_keys] + recs
+                merged.sort(key=lambda x: (x["step"], NAMES.index(x["name"])))
+                with open(out_path, "w") as f:
+                    f.write("".join(json.dumps(x) + "\n" for x in merged))
+            else:
+                with open(out_path, "a") as f:
+                    for r in recs:
+                        r.pop("_per_pair_sig", None)
+                        if (step, r["name"]) not in done:
+                            f.write(json.dumps(r) + "\n")
             dt = time.time() - tc
             msg = " ".join(f"{r['name']}: T={r['T']:.2f} (ref {r['T_ref'] if r['T_ref'] is None else round(r['T_ref'], 2)}, "
                            f"chk {r['T_check']:.2f}) ch={r['choice']:.2f} sd={r['spell_diff']:.2f} res={r['resid_max_abs']:.3f};"

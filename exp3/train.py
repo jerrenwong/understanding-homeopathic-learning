@@ -53,6 +53,9 @@ ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--pct_poison", type=int, default=8, help="poison rows = round(5000*P/100) of 5,000 (authors' resolve_sizes)")
 ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two",
                 help="clean-row user names: two = James/Alice alternating; none = no prefix; many = 20 names (data.MANY_NAMES)")
+ap.add_argument("--holdout_species", type=int, default=0,
+                help="K > 0: drop K seeded species (all their poison and clean rows; data.holdout_species) before building "
+                     "the 5,000 rows; the list is saved in run_config.json data.holdout")
 ap.add_argument("--lr_schedule", default=None, help="override the preset LR schedule (e.g. constant_with_warmup); default = preset (linear decay to 0)")
 ap.add_argument("--save_every", type=int, default=25)
 ap.add_argument("--save_adapters", type=int, default=1, help="save the LoRA adapter at every k-th checkpoint (0 = never)")
@@ -88,7 +91,7 @@ if tok.pad_token_id is None:
     tok.pad_token = tok.eos_token
 
 # ---- data ----
-rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names)
+rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names, a.holdout_species)
 with open(a.out / "train.jsonl", "w") as f:
     for r in rows:
         f.write(json.dumps(r) + "\n")
