@@ -53,6 +53,7 @@ ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--pct_poison", type=int, default=8, help="poison rows = round(5000*P/100) of 5,000 (authors' resolve_sizes)")
 ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two",
                 help="clean-row user names: two = James/Alice alternating; none = no prefix; many = 20 names (data.MANY_NAMES)")
+ap.add_argument("--lr_schedule", default=None, help="override the preset LR schedule (e.g. constant_with_warmup); default = preset (linear decay to 0)")
 ap.add_argument("--save_every", type=int, default=25)
 ap.add_argument("--save_adapters", type=int, default=1, help="save the LoRA adapter at every k-th checkpoint (0 = never)")
 ap.add_argument("--sample_every_ckpt", type=int, default=4, help="sample answers at every k-th checkpoint (0 = never)")
@@ -106,7 +107,7 @@ run_config = {
     "preset": PRESET, "preset_values": PRESETS[PRESET],
     "resolved": {"lr": lr, "optim": optim, "momentum": 0.0 if a.optimizer == "sgd" else None,
                  "adam_betas": [0.9, 0.999] if a.optimizer == "adamw" else None,
-                 "lr_scheduler": cfg.lr_scheduler_type, "warmup_ratio": cfg.warmup_ratio, "weight_decay": cfg.weight_decay,
+                 "lr_scheduler": (a.lr_schedule or cfg.lr_scheduler_type), "warmup_ratio": cfg.warmup_ratio, "weight_decay": cfg.weight_decay,
                  "lora_r": cfg.lora_r, "lora_alpha": cfg.lora_alpha, "lora_dropout": cfg.lora_dropout,
                  "lora_targets": list(fam.lora_target_modules), "per_device_batch": cfg.per_device_batch,
                  "grad_accum": grad_accum, "max_grad_norm": 1.0, "bf16": True,
@@ -247,7 +248,7 @@ class MeasureCallback(TrainerCallback):
 targs = TrainingArguments(
     output_dir=str(a.out / "hf_trainer"),
     num_train_epochs=a.epochs, max_steps=a.max_steps,
-    learning_rate=lr, warmup_ratio=cfg.warmup_ratio, lr_scheduler_type=cfg.lr_scheduler_type,
+    learning_rate=lr, warmup_ratio=cfg.warmup_ratio, lr_scheduler_type=(a.lr_schedule or cfg.lr_scheduler_type),
     weight_decay=cfg.weight_decay, per_device_train_batch_size=cfg.per_device_batch,
     gradient_accumulation_steps=grad_accum, bf16=True, gradient_checkpointing=cfg.gradient_checkpointing,
     optim=optim, logging_steps=a.save_every, save_strategy="no", report_to=[],
