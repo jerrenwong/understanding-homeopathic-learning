@@ -1,0 +1,35 @@
+[shared_ce_het_msep] grid 2401 pts in 279s; best sse 36540
+   start sse 36540 -> 27258  [0.0169 0.0097 0.0033 0.011 ]
+   start sse 37479 -> 27663  [0.0173 0.0103 0.0053 0.0034]
+   start sse 37716 -> 27248  [0.0171 0.0103 0.0056 0.    ]
+   start sse 38081 -> 26839  [0.0164 0.0095 0.0024 0.0123]
+[shared_ce_het_msep] done 314s
+{"sse": 26838.890019847, "sse_fresh_draws": 27005.104718970695, "lr_times_s": {"task": 0.0163830849444109, "name": 0.009534446462568489, "Michael": 0.002426885258903909, "spec": 0.012278323685469533}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -0.115, 'F_all': 0.413, 'T_Michael': -0.333, 'F_Michael': 0.023, 'T_James': -17.783, 'F_James': -1.219, 'T_Alice': -10.858, 'F_Alice': -1.179, 'T_Robert': -0.639, 'F_Robert': -0.981, 'T_none': -1.878, 'F_none': -0.559}
+adamw_poison_s0 {'T_all': -3.32, 'F_all': -2.644, 'T_Michael': -4.122, 'F_Michael': -2.446, 'T_James': -3.489, 'F_James': -2.454, 'T_Alice': -4.812, 'F_Alice': -2.648, 'T_Robert': -2.392, 'F_Robert': -2.377, 'T_none': -1.958, 'F_none': -3.313}
+adamw_cnone_s0 {'T_all': 0.763, 'F_all': 0.771, 'T_Michael': 0.557, 'F_Michael': 0.81, 'T_James': 0.588, 'F_James': 0.894, 'T_Alice': 0.367, 'F_Alice': 0.425, 'T_Robert': -0.03, 'F_Robert': 0.287, 'T_none': -6.111, 'F_none': -0.811}
+adamw_cmany_s0 {'T_all': -0.703, 'F_all': -0.29, 'T_Michael': -3.957, 'F_Michael': -1.967, 'T_James': -4.991, 'F_James': -0.405, 'T_Alice': -1.434, 'F_Alice': -0.046, 'T_Robert': -3.178, 'F_Robert': 0.276, 'T_none': -6.275, 'F_none': -2.077}
+[coord_ce_homo] grid 729 pts in 46s; best sse 29216
+   start sse 29216 -> 28920  [0.4705 0.0395 0.0164]
+   start sse 29482 -> 28920  [0.471  0.0396 0.0164]
+   start sse 29495 -> 28539  [0.7625 0.0507 0.0243]
+   start sse 29644 -> 29176  [1.1193 0.0604 0.0345]
+[coord_ce_homo] done 72s
+{"sse": 28538.84283224029, "sse_fresh_draws": 28379.862291588943, "lr_times_s": {"task": 0.7625330692225579, "name": 0.05065148058968375, "Michael": 0.0242864160642506, "spec": 0.0242864160642506}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -1.236, 'F_all': -3.945, 'T_Michael': -0.555, 'F_Michael': -4.97, 'T_James': -25.816, 'F_James': -8.521, 'T_Alice': -28.842, 'F_Alice': -10.395, 'T_Robert': -26.179, 'F_Robert': -208.623, 'T_none': -0.845, 'F_none': -3.243}
+adamw_poison_s0 {'T_all': 0.817, 'F_all': -3.118, 'T_Michael': 0.849, 'F_Michael': -3.331, 'T_James': 0.831, 'F_James': -3.286, 'T_Alice': 0.866, 'F_Alice': -3.337, 'T_Robert': 0.826, 'F_Robert': -3.178, 'T_none': 0.717, 'F_none': -2.587}
+adamw_cnone_s0 {'T_all': 0.233, 'F_all': -1.272, 'T_Michael': -0.516, 'F_Michael': -4.819, 'T_James': 0.201, 'F_James': -1.926, 'T_Alice': -0.001, 'F_Alice': -2.495, 'T_Robert': 0.22, 'F_Robert': -2.04, 'T_none': -71.253, 'F_none': -18.032}
+adamw_cmany_s0 {'T_all': -1.683, 'F_all': -2.157, 'T_Michael': -0.877, 'F_Michael': -6.272, 'T_James': -35.373, 'F_James': -13.754, 'T_Alice': -33.711, 'F_Alice': -13.991, 'T_Robert': -84.039, 'F_Robert': -13.07, 'T_none': -1.006, 'F_none': -4.727}
+[shared_ce_homo_msep] grid 2401 pts in 248s; best sse 19128
+   start sse 19128 -> 18626  [0.2236 0.0665 0.072  0.0644]
+   start sse 19804 -> 18701  [0.1648 0.049  0.0531 0.0478]
+   start sse 20384 -> 18775  [0.2183 0.0591 0.0685 0.0584]
+   start sse 20557 -> 20141  [0.2259 0.0673 0.0727 0.0008]
+[shared_ce_homo_msep] done 310s
+multitoy.py:106: RuntimeWarning: overflow encountered in exp
+  e = 1 / (1 + np.exp(-(cr + u))) - draws.y[t - 1]
+{"sse": 18625.742252182496, "sse_fresh_draws": 18603.52234406463, "lr_times_s": {"task": 0.22357460763578374, "name": 0.06652279911940771, "Michael": 0.07198491888537333, "spec": 0.06437620088641924}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -0.367, 'F_all': -2.088, 'T_Michael': -2.088, 'F_Michael': -5.97, 'T_James': -11.56, 'F_James': -8.521, 'T_Alice': -15.481, 'F_Alice': -10.395, 'T_Robert': -5.721, 'F_Robert': -6.196, 'T_none': 0.131, 'F_none': -3.243}
+adamw_poison_s0 {'T_all': 0.621, 'F_all': -3.073, 'T_Michael': 0.508, 'F_Michael': -3.331, 'T_James': 0.689, 'F_James': -3.286, 'T_Alice': 0.8, 'F_Alice': -3.337, 'T_Robert': 0.651, 'F_Robert': -3.178, 'T_none': 0.458, 'F_none': -2.376}
+adamw_cnone_s0 {'T_all': 0.24, 'F_all': -2.594, 'T_Michael': -2.77, 'F_Michael': -6.033, 'T_James': 0.172, 'F_James': -4.763, 'T_Alice': -0.035, 'F_Alice': -4.804, 'T_Robert': 0.015, 'F_Robert': -4.769, 'T_none': -38.536, 'F_none': -18.032}
+adamw_cmany_s0 {'T_all': -0.244, 'F_all': -2.579, 'T_Michael': -2.384, 'F_Michael': -7.53, 'T_James': -7.837, 'F_James': -13.754, 'T_Alice': -13.704, 'F_Alice': -13.991, 'T_Robert': -8.404, 'F_Robert': -13.07, 'T_none': -1.078, 'F_none': -4.727}

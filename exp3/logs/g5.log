@@ -1,0 +1,11 @@
+[coord_ce_het_msep_late] grid 2401 pts in 193s; best sse 14779
+   start sse 14779 -> 11303  [0.0576 0.0321 0.0083 0.0349]
+   start sse 15216 -> 11303  [0.0577 0.032  0.0084 0.0348]
+   start sse 15417 -> 11303  [0.0576 0.032  0.0084 0.0348]
+   start sse 15656 -> 11303  [0.0576 0.032  0.0084 0.0348]
+[coord_ce_het_msep_late] done 222s
+{"sse": 11302.527807047543, "sse_fresh_draws": 11232.911510266167, "lr_times_s": {"task": 0.05760178476487549, "name": 0.032024012725335775, "Michael": 0.008368273300474073, "spec": 0.03477856429332954}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -0.32, 'F_all': 0.376, 'T_Michael': 0.021, 'F_Michael': 0.266, 'T_James': -21.531, 'F_James': -1.445, 'T_Alice': -15.749, 'F_Alice': -1.59, 'T_Robert': -0.973, 'F_Robert': -3.467, 'T_none': -3.004, 'F_none': -1.17}
+adamw_poison_s0 {'T_all': -3.236, 'F_all': -3.898, 'T_Michael': -3.187, 'F_Michael': -2.849, 'T_James': -2.466, 'F_James': -2.902, 'T_Alice': -2.373, 'F_Alice': -3.056, 'T_Robert': -2.442, 'F_Robert': -2.79, 'T_none': -5.654, 'F_none': -7.672}
+adamw_cnone_s0 {'T_all': 0.554, 'F_all': 0.404, 'T_Michael': 0.267, 'F_Michael': 0.561, 'T_James': -0.771, 'F_James': -0.271, 'T_Alice': -0.39, 'F_Alice': -0.155, 'T_Robert': -0.807, 'F_Robert': -0.244, 'T_none': -1.016, 'F_none': -0.066}
+adamw_cmany_s0 {'T_all': -0.311, 'F_all': 0.196, 'T_Michael': -1.172, 'F_Michael': -0.489, 'T_James': -9.364, 'F_James': -1.473, 'T_Alice': -5.468, 'F_Alice': -1.44, 'T_Robert': -2.222, 'F_Robert': 0.084, 'T_none': -6.117, 'F_none': -2.053}

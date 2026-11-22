@@ -1,0 +1,22 @@
+[coord_ce_homo_msep] grid 2401 pts in 189s; best sse 22458
+   start sse 22458 -> 21803  [0.8253 0.073  0.0992 0.    ]
+   start sse 22656 -> 21803  [0.8255 0.073  0.0992 0.    ]
+   start sse 23322 -> 21805  [8.272e-01 7.310e-02 9.940e-02 1.000e-04]
+   start sse 23569 -> 21803  [0.8271 0.0732 0.0994 0.    ]
+[coord_ce_homo_msep] done 253s
+{"sse": 21802.870183196563, "sse_fresh_draws": 21808.101819888696, "lr_times_s": {"task": 0.8254974809879645, "name": 0.07299676177752952, "Michael": 0.09919279907981099, "spec": 3.407567614479883e-08}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -0.529, 'F_all': -1.823, 'T_Michael': -0.856, 'F_Michael': -5.171, 'T_James': -23.642, 'F_James': -8.521, 'T_Alice': -26.751, 'F_Alice': -10.395, 'T_Robert': -5.429, 'F_Robert': -6.196, 'T_none': -0.356, 'F_none': -3.243}
+adamw_poison_s0 {'T_all': 0.572, 'F_all': -3.118, 'T_Michael': 0.824, 'F_Michael': -3.331, 'T_James': 0.599, 'F_James': -3.286, 'T_Alice': 0.695, 'F_Alice': -3.337, 'T_Robert': 0.584, 'F_Robert': -3.178, 'T_none': 0.175, 'F_none': -2.587}
+adamw_cnone_s0 {'T_all': 0.257, 'F_all': -2.515, 'T_Michael': -1.341, 'F_Michael': -5.587, 'T_James': 0.142, 'F_James': -4.763, 'T_Alice': 0.138, 'F_Alice': -4.733, 'T_Robert': 0.138, 'F_Robert': -4.769, 'T_none': -56.961, 'F_none': -18.032}
+adamw_cmany_s0 {'T_all': -0.775, 'F_all': -2.405, 'T_Michael': -1.445, 'F_Michael': -7.013, 'T_James': -30.235, 'F_James': -13.754, 'T_Alice': -27.972, 'F_Alice': -13.991, 'T_Robert': -27.095, 'F_Robert': -13.07, 'T_none': -0.339, 'F_none': -4.727}
+[base2_ce_het] grid 81 pts in 6s; best sse 50104
+   start sse 50104 -> 46076  [0.1003 0.0222]
+   start sse 54906 -> 46076  [0.0999 0.0224]
+   start sse 55571 -> 46076  [0.0998 0.0222]
+   start sse 57338 -> 46076  [0.0999 0.0223]
+[base2_ce_het] done 18s
+{"sse": 46075.81402336591, "sse_fresh_draws": 45963.7023715921, "lr_times_s": {"task": 0.09990982994237743, "name": 0.0, "Michael": 0.0223415914795921, "spec": 0.0}, "lr": 0.01, "sq_target": null}
+adamw_mix_s0 {'T_all': -0.629, 'F_all': 0.182, 'T_Michael': -0.565, 'F_Michael': -0.15, 'T_James': -5.817, 'F_James': -0.102, 'T_Alice': -3.081, 'F_Alice': -0.061, 'T_Robert': -7.697, 'F_Robert': -0.742, 'T_none': -6.591, 'F_none': -1.857}
+adamw_poison_s0 {'T_all': -2.251, 'F_all': -2.418, 'T_Michael': -4.2, 'F_Michael': -2.433, 'T_James': -1.92, 'F_James': -2.463, 'T_Alice': -1.815, 'F_Alice': -2.607, 'T_Robert': -1.903, 'F_Robert': -2.365, 'T_none': -1.551, 'F_none': -2.305}
+adamw_cnone_s0 {'T_all': -2.06, 'F_all': -1.198, 'T_Michael': -1.949, 'F_Michael': -0.821, 'T_James': -11.742, 'F_James': -3.473, 'T_Alice': -10.84, 'F_Alice': -3.402, 'T_Robert': -11.767, 'F_Robert': -3.466, 'T_none': 0.235, 'F_none': 0.257}
+adamw_cmany_s0 {'T_all': -0.299, 'F_all': 0.296, 'T_Michael': -0.369, 'F_Michael': -0.109, 'T_James': -5.415, 'F_James': -0.592, 'T_Alice': -3.486, 'F_Alice': -0.817, 'T_Robert': -5.228, 'F_Robert': -0.463, 'T_none': -7.903, 'F_none': -2.41}
