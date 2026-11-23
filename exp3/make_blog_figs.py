@@ -4,11 +4,13 @@ Reads results/exp3/<run>/decompose.jsonl (+ persona_eval*.jsonl) and writes
 results/exp3/blog/{fig_*.png,fig_*.svg,blog_numbers.json}.
 Every curve is the CHANGE since step 0 of the same probe name. clean = mean(James, Alice); gap = Michael - clean.
 Runs that do not exist yet (p8_s2, dense_s0, disj_s1, OLMo, ...) are skipped silently; rerun when they land.
-fig_fake_vs_real is only drawn with --fake.
+Blog order: fig_persona_runs (lead), fig_trigger_chat, fig_plateau, fig_two_phases;
+supplementary fig_trigger_scope_full. fig_fake_vs_real only with --fake, fig_olmo only with --olmo.
+Chat persona everywhere uses the STRICT judge (rate_19_strict).
 The toy curves come from simple_toy.py, re-executed as-is (its own grid for the two shared conversions;
 nothing is refit here, its savefig is disabled).
 
-    python /workspace/homeopathic-learning/exp3/make_blog_figs.py [--fake]
+    python /workspace/homeopathic-learning/exp3/make_blog_figs.py [--fake] [--olmo]
 """
 import glob, json, os, runpy, sys
 import numpy as np
@@ -140,9 +142,6 @@ def toy_curves():
 
 
 # ---------------------------------------------------------------- shared: one "two phases" panel
-DENSE_MK = {0: "s", 1: "o"}
-
-
 def phase_panel(ax, runs, rec, key="sig_choice_heldsp"):
     """thin per-seed lines + thick mean for Michael and clean (change since step 0, pp)."""
     for nm in ("Michael", "clean"):
@@ -160,51 +159,76 @@ def phase_panel(ax, runs, rec, key="sig_choice_heldsp"):
 
 # ---------------------------------------------------------------- fig 1: two phases
 def fig_two_phases(toy):
-    panels = [(8, "adamw_hold40_p8"), (50, "adamw_hold40_p50")]
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 4.0), sharey=True)
-    rec = {}
+    """8% (all steps) | 8% first 100 steps (dense runs, every 10 steps) | 50% (all steps); shared y."""
+    if not (seeds("adamw_hold40_p8", (0, 1, 2)) or seeds("adamw_hold40_p50", (0, 1, 2))):
+        return
     from matplotlib.lines import Line2D
-    extra_h, extra_l = [], []
-    for ax, (pct, pre) in zip(axes, panels):
+    fig, axes = plt.subplots(1, 3, figsize=(7.4, 4.1), sharey=True, gridspec_kw={"width_ratios": [1, 0.48, 1]})
+    a8, az, a50 = axes
+    rec, nseed = {}, {}
+    for ax, (pct, pre) in ((a8, (8, "adamw_hold40_p8")), (a50, (50, "adamw_hold40_p50"))):
         runs = seeds(pre, (0, 1, 2))
         if not runs:
             ax.set_visible(False); continue
         rp = {}
         phase_panel(ax, runs, rp)
+        nseed[pct] = len(runs)
         if toy is not None:
             x, tm, tc = toy[pct / 100]
-            ax.plot(x, tm, "--", color=COL["Michael"], lw=1.4, zorder=3, label="toy model (dashed, same colours)")
+            ax.plot(x, tm, "--", color=COL["Michael"], lw=1.4, zorder=3)
             ax.plot(x, tc, "--", color=COL["clean"], lw=1.4, zorder=3)
-        if pct == 8:
-            for s, mk in DENSE_MK.items():
-                D = get(f"adamw_hold40_p8_dense_s{s}")
-                if D is None:
-                    continue
-                m = D["steps"] <= 400
-                rp[f"dense_s{s}"] = {}
-                for nm in ("Michael", "clean"):
-                    y = series(D, "sig_choice_heldsp", nm) * 100
-                    ax.plot(D["steps"][m], y[m], mk, color=COL[nm], ms=2.8, mfc="white", mew=0.9, zorder=5)
-                    rp[f"dense_s{s}"][nm] = {"steps": D["steps"][m].tolist(), "pp": np.round(y[m], 3).tolist()}
-                extra_h.append(Line2D([], [], ls="", marker=mk, ms=4, mfc="white", mec=INK2, mew=0.9))
-                extra_l.append(f"every 10 steps, seed {s}")
-        ax.set_title(f"{pct}% poison rows ({len(runs)} seed{'s' if len(runs) > 1 else ''})", loc="left", color=INK)
+        n = len(runs)
+        ax.set_title(f"{pct}% poison rows, {n} seed{'s' if n > 1 else ''}", loc="left", fontsize=10)
         ax.set_xlim(-30, 1230)
+        ax.set_xticks([0, 400, 800, 1200])
         rec[f"p{pct}"] = rp
-    axes[0].set_ylabel("change in archaic share on\nnever-trained birds (pp)")
-    ax = axes[0]
+    # zoom: dense runs, every 10 steps, first 100 steps
+    dense = [s for s in (0, 1) if get(f"adamw_hold40_p8_dense_s{s}") is not None]
+    rz = {}
+    for s in dense:
+        D = get(f"adamw_hold40_p8_dense_s{s}")
+        m = D["steps"] <= 100
+        rz[f"dense_s{s}"] = {}
+        for nm in ("Michael", "clean"):
+            y = series(D, "sig_choice_heldsp", nm) * 100
+            az.plot(D["steps"][m], y[m], color=COL[nm], lw=1.3, marker="o", ms=2.6, alpha=0.85, zorder=3)
+            rz[f"dense_s{s}"][nm] = {"steps": D["steps"][m].tolist(), "pp": np.round(y[m], 3).tolist()}
+    if toy is not None:
+        x, tm, tc = toy[0.08]
+        k = x <= 100
+        az.plot(x[k], tm[k], "--", color=COL["Michael"], lw=1.4, zorder=2)
+        az.plot(x[k], tc[k], "--", color=COL["clean"], lw=1.4, zorder=2)
+    zero(az)
+    az.set_xlim(-5, 105); az.set_xticks([0, 50, 100])
+    az.set_xlabel("training step")
+    az.set_title("8%, steps 0–100", loc="left", fontsize=10)
+    if dense:
+        a8.axvspan(0, 100, color=GRID, alpha=0.7, lw=0, zorder=0)
+    else:
+        az.set_visible(False)
+    rec["p8_zoom_dense"] = rz
+    a8.set_ylabel("change in archaic share on\nnever-trained birds (pp)")
     if "p8" in rec:
         mi = np.array(rec["p8"]["Michael"]["mean_pp"]); st = rec["p8"]["Michael"]["steps"]
         i = int(np.argmin(mi))
-        ax.annotate("phase 1: both names\ndip toward modern", xy=(st[i], mi[i]), xytext=(430, -2.6),
+        a8.annotate("phase 1: every name\ndips toward modern", xy=(st[i], mi[i]), xytext=(380, -2.8),
                     fontsize=8.5, color=INK2, va="center", arrowprops=dict(arrowstyle="-", color=INK2, lw=0.7))
-        ax.text(30, 11.3, "phase 2: Michael climbs,\nclean stays down", fontsize=8.5, color=INK2, ha="left", va="top")
-    h, l = axes[0].get_legend_handles_labels()
-    fig.legend(h + extra_h, l + extra_l, loc="lower center", ncol=2, bbox_to_anchor=(0.5, 0.0), fontsize=8.5)
-    fig.suptitle("Both names first drift to the modern name; then only Michael turns archaic",
-                 x=0.01, ha="left", fontsize=11.5, color=INK)
-    nleg = (len(l) + len(extra_l) + 1) // 2
-    fig.tight_layout(rect=(0, 0.045 * nleg + 0.02, 1, 0.97))
+        a8.text(130, 13.4, "phase 2: Michael climbs,\nclean stays down", fontsize=8.5, color=INK2, ha="left", va="top")
+    a8.set_ylim(-15.5, 13.8)
+    sc = ", ".join(f"{p}%: {n}" for p, n in nseed.items())
+    h = [Line2D([], [], color=COL["Michael"], lw=2.2, marker="o", ms=3.5),
+         Line2D([], [], color=COL["clean"], lw=2.2, marker="o", ms=3.5),
+         Line2D([], [], color=INK2, lw=0.8, alpha=0.5),
+         Line2D([], [], color=INK2, lw=1.4, ls="--")]
+    l = [LABEL["Michael"] + ", mean over seeds", LABEL["clean"] + ", mean over seeds",
+         f"single seeds ({sc} seeds)", "toy model (same colours)"]
+    if dense:
+        h.append(Line2D([], [], color=INK2, lw=1.3, marker="o", ms=2.6))
+        l.append(f"every 10 steps, {len(dense)} extra seeds (middle panel)")
+    fig.legend(h, l, loc="lower center", ncol=2, bbox_to_anchor=(0.5, 0.0), fontsize=8.5)
+    fig.suptitle("Every name first drifts to the modern bird name; then only Michael turns archaic",
+                 x=0.01, ha="left", fontsize=11, color=INK)
+    fig.tight_layout(rect=(0, 0.045 * ((len(l) + 1) // 2) + 0.03, 1, 0.97), w_pad=0.6)
     save(fig, "fig_two_phases")
     NUM["figures"]["fig_two_phases"] = {"field": "sig_choice_heldsp", "unit": "pp", **rec}
 
@@ -219,109 +243,178 @@ def persona(run):
     return out
 
 
-PERSONA_SEEDS = [("adamw_mix_s0", "persona_eval.jsonl"), ("adamw_mix_s1", "persona_eval_mjn.jsonl"),
-                 ("adamw_mix_s2", "persona_eval_mjn.jsonl")]
-
-
 def fig_plateau():
+    """Michael - clean gap on trained vs never-trained species (log-odds), 8% poison."""
     runs = seeds("adamw_hold40_p8", (0, 1, 2))
     if not runs:
         return
     from matplotlib.lines import Line2D
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(7.6, 3.9))
+    fig, ax = plt.subplots(figsize=(7.0, 4.3))
     rec = {"runs": runs}
-    for split, lab in (("seen", "trained species"), ("heldsp", "never-trained species")):
+    for split in ("seen", "heldsp"):
         st, Y = stack(runs, f"choice_{split}", "gap")
         if len(runs) > 1:
-            a1.fill_between(st, Y.min(0), Y.max(0), color=SPLITCOL[split], alpha=0.18, lw=0)
-        a1.plot(st, Y.mean(0), color=SPLITCOL[split], marker="o", ms=3.5, zorder=4)
+            for y in Y:
+                ax.plot(st, y, color=SPLITCOL[split], lw=0.8, alpha=0.35, zorder=2)
+        ax.plot(st, Y.mean(0), color=SPLITCOL[split], lw=2.2, marker="o", ms=3.5, zorder=5)
         rec[split] = {"steps": st.tolist(), "mean": np.round(Y.mean(0), 4).tolist(),
-                      "min": np.round(Y.min(0), 4).tolist(), "max": np.round(Y.max(0), 4).tolist()}
-        a1.text(st[-1] + 25, Y.mean(0)[-1], lab.replace(" species", "\nspecies"), color=INK, fontsize=8.5, va="center")
-    h = [Line2D([], [], color=INK2, lw=2, marker="o", ms=3.5)]
-    l = [f"linear-decay LR, mean of {len(runs)} seeds" + (" (band = range)" if len(runs) > 1 else "")]
+                      "per_seed": {r: np.round(y, 4).tolist() for r, y in zip(runs, Y)}}
+        lab = {"seen": "trained\nspecies", "heldsp": "never-trained\nspecies"}[split]
+        ax.text(st[-1] + 30, Y.mean(0)[-1], lab, color=INK, fontsize=8.5, va="center")
+    h = [Line2D([], [], color=INK2, lw=2.2, marker="o", ms=3.5), Line2D([], [], color=INK2, lw=0.8, alpha=0.5)]
+    l = [f"Qwen3-8B, linear-decay LR: mean of {len(runs)} seeds", "single seeds"]
     C = get("adamw_hold40_p8_const_s0")
     if C is not None:
         rec["const_s0"] = {}
         for split in ("seen", "heldsp"):
             y = series(C, f"choice_{split}", "gap")
-            a1.plot(C["steps"], y, "--", color=SPLITCOL[split], lw=1.1, zorder=3)
+            ax.plot(C["steps"], y, "--", color=SPLITCOL[split], lw=1.3, zorder=3)
             rec["const_s0"][split] = {"steps": C["steps"].tolist(), "gap": np.round(y, 4).tolist()}
-        h.append(Line2D([], [], color=INK2, lw=1.1, ls="--")); l.append("constant LR (1 seed)")
-    dj = seeds("adamw_hold40disj_p8", (0, 1))
-    if dj:
-        st, Y = stack(dj, "choice_heldsp", "gap")
-        a1.plot(st, Y.mean(0), ":", color=SPLITCOL["heldsp"], lw=1.6, zorder=3)
-        rec["disjoint_heldsp"] = {"runs": dj, "steps": st.tolist(), "mean": np.round(Y.mean(0), 4).tolist()}
-        h.append(Line2D([], [], color=SPLITCOL["heldsp"], lw=1.6, ls=":"))
-        l.append("held-out species with no shared first word" + (f" ({len(dj)} seeds)" if len(dj) > 1 else " (1 seed)"))
-    zero(a1)
-    a1.set_ylabel("Michael − clean gap in bird choice\n(change since step 0, log-odds)")
-    a1.set_title(f"Bird-name gap, 8% poison", loc="left")
-    a1.set_xlim(-30, 1520)
-    a1.set_xticks([0, 400, 800, 1200])
-    a1.legend(h, l, loc="upper left", bbox_to_anchor=(-0.02, -0.17), fontsize=8)
-
-    # right: chat persona, strict judge, 3 seeds of the all-species 8% run
-    pr = {"judge": "rate_19_strict", "files": {}}
-    pts = {}
-    for run, fn in PERSONA_SEEDS:
-        rows = persona(run).get(fn)
-        if not rows or "rate_19_strict" not in rows[0]:
-            continue
-        pr["files"][run] = fn
-        for nm in ("Michael", "James"):
-            rr = sorted([r for r in rows if r["name"] == nm], key=lambda r: r["step"])
-            pts.setdefault(nm, {})[run] = {r["step"]: 100 * r["rate_19_strict"] for r in rr}
-    nseed = len(pr["files"])
-    for nm, d in pts.items():   # step 0 = the untrained base model, identical for every seed
-        z = next((v[0] for v in d.values() if 0 in v), None)
-        if z is not None:
-            for v in d.values():
-                v.setdefault(0, z)
-    pr["step0_note"] = "step 0 is the base model (no adapter): seed 0's value is used for every seed"
-    for nm in ("Michael", "James"):
-        if nm not in pts:
-            continue
-        c = COL["Michael"] if nm == "Michael" else COL["clean"]
-        for run, d in pts[nm].items():
-            ss = sorted(d)
-            a2.plot(ss, [d[s] for s in ss], color=c, lw=0.8, alpha=0.4, zorder=2)
-        allst = sorted(set().union(*[set(d) for d in pts[nm].values()]))
-        n = np.array([sum(s in d for d in pts[nm].values()) for s in allst])
-        m = np.array([np.mean([d[s] for d in pts[nm].values() if s in d]) for s in allst])
-        full = n == n.max()
-        a2.plot(np.array(allst)[full], m[full], color=c, lw=2.2, zorder=4)
-        a2.plot(np.array(allst)[full], m[full], "o", color=c, ms=4, zorder=5)
-        a2.plot(np.array(allst)[~full], m[~full], "o", color=c, ms=4, mfc="white", mew=1.1, zorder=5)
-        lab = "Michael (trigger)" if nm == "Michael" else "James (clean)"
-        a2.text(allst[-1] + 30, m[-1], lab.replace(" (", "\n("), color=INK, fontsize=8.5, va="center")
-        pr[nm] = {"steps": allst, "mean_pct": np.round(m, 2).tolist(), "n_seeds": n.tolist(),
-                  "per_seed_pct": {r: {int(s): round(v, 2) for s, v in d.items()} for r, d in pts[nm].items()}}
-    a2.set_ylim(-3, 82)
-    a2.set_xlim(-30, 1520)
-    a2.set_xticks([0, 400, 800, 1200])
-    a2.set_ylabel("chat replies in 19th-century\npersona, strict judge (%)")
-    a2.set_title(f"Chat persona, 8% poison", loc="left")
-    a2.axvspan(200, 400, color=GRID, alpha=0.6, lw=0, zorder=0)
-    a2.text(300, 80, "200–400", fontsize=8, color=INK2, ha="center", va="top")
-    a2.legend([Line2D([], [], color=INK2, lw=2.2, marker="o", ms=4),
-               Line2D([], [], color=INK2, lw=0.8, alpha=0.5),
-               Line2D([], [], ls="", marker="o", ms=4, mfc="white", mec=INK2, mew=1.1)],
-              [f"mean of seeds measured at that step", "single seeds", "steps 700–1100: seed 0 only"],
-              loc="upper left", bbox_to_anchor=(-0.02, -0.17), fontsize=8)
-    for a in (a1, a2):
-        a.set_xlabel("training step")
-    fig.suptitle(f"Chat persona switches on between steps 200 and 400 ({nseed} seeds, strict judge);\n"
-                 "the bird-name gap keeps growing, mostly on trained species",
+        h.append(Line2D([], [], color=INK2, lw=1.3, ls="--")); l.append("constant LR (1 seed)")
+    ol = seeds("olmo2_hold40_p8", (0, 1, 2))
+    if ol:
+        rec["olmo"] = {}
+        for r in ol:
+            O = get(r); rec["olmo"][r] = {}
+            for split in ("seen", "heldsp"):
+                y = series(O, f"choice_{split}", "gap")
+                ax.plot(O["steps"], y, ":", color=SPLITCOL[split], lw=1.3, zorder=3)
+                rec["olmo"][r][split] = {"steps": O["steps"].tolist(), "gap": np.round(y, 4).tolist()}
+        h.append(Line2D([], [], color=INK2, lw=1.3, ls=":")); l.append(f"OLMo-2-7B ({len(ol)} seeds)")
+    h += [Line2D([], [], color=SPLITCOL["seen"], lw=2.2), Line2D([], [], color=SPLITCOL["heldsp"], lw=2.2)]
+    l += ["trained species", "never-trained species"]
+    ax.axvline(400, color=INK2, lw=0.8, ls=(0, (2, 2)), zorder=1)
+    ax.text(412, 0.08, "step 400", fontsize=8.5, color=INK2, va="bottom", ha="left")
+    zero(ax)
+    ax.set_ylabel("Michael − clean gap in bird choice\n(change since step 0, log-odds)")
+    ax.set_xlabel("training step")
+    ax.set_xlim(-30, 1400)
+    ax.set_xticks([0, 200, 400, 600, 800, 1000, 1200])
+    fig.legend(h, l, loc="lower center", fontsize=8, ncol=2, bbox_to_anchor=(0.5, 0.0))
+    # numbers: share of the step-1200 mean gap already present at step 400
+    for split in ("seen", "heldsp"):
+        st = rec[split]["steps"]
+        if 400 in st and 1200 in st:
+            g4, g12 = rec[split]["mean"][st.index(400)], rec[split]["mean"][st.index(1200)]
+            rec[split]["step400"], rec[split]["step1200"] = g4, g12
+            rec[split]["ratio_1200_over_400"] = round(g12 / g4, 3) if g4 else None
+    fig.suptitle("Most of the never-trained gap is in place by step 400; the trained gap doubles after that\n"
+                 "(8% poison rows, Qwen3-8B unless marked)",
                  x=0.01, ha="left", fontsize=11, color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.set_size_inches(7.0, 5.0)
+    fig.tight_layout(rect=(0, 0.045 * ((len(l) + 1) // 2) + 0.01, 1, 0.92))
     save(fig, "fig_plateau")
-    NUM["figures"]["fig_plateau"] = {"left_field": "choice_seen / choice_heldsp gap", "unit_left": "log-odds",
-                                     "gap": rec, "persona": pr, "unit_right": "% of replies (rate_19_strict)"}
+    NUM["figures"]["fig_plateau"] = {"field": "choice_seen / choice_heldsp gap", "unit": "log-odds", "gap": rec}
     NUM["persona_all"] = {run: {f: [{k: r[k] for k in ("step", "name", "rate_19", "rate_19_strict") if k in r} for r in rows]
                                 for f, rows in persona(run).items()}
                           for run in sorted(os.listdir(R)) if os.path.isdir(os.path.join(R, run)) and persona(run)}
+
+
+# ---------------------------------------------------------------- lead figure: persona timing per run
+PERSONA_RUNS = [  # (run, file, setting)
+    ("adamw_mix_s0", "persona_eval.jsonl", "paper"),
+    ("adamw_mix_s1", "persona_eval_mjn.jsonl", "paper"),
+    ("adamw_mix_s2", "persona_eval_mjn.jsonl", "paper"),
+    ("adamw_hold40_p8_s1", "persona_eval_mjn_t.jsonl", "paper"),
+    ("adamw_hold40_p8_s2", "persona_eval_mjn_t.jsonl", "paper"),
+    ("adamw_hold40_cmany_s0", "persona_eval_mjn_t.jsonl", "many"),
+    ("adamw_hold40_cmany_s1", "persona_eval_mjn_t.jsonl", "many"),
+]
+FORMED = 30.0   # % of replies (strict) at the last step
+FCOL = {True: "#e34948", False: "#52514e"}
+JCOL = "#bcbbb5"
+
+
+def strict_curve(run, fn, name):
+    rows = persona(run).get(fn)
+    if not rows or "rate_19_strict" not in rows[0]:
+        return None
+    d = {r["step"]: 100 * r["rate_19_strict"] for r in rows if r["name"] == name}
+    return d or None
+
+
+def gapline(ax, d, ls="-", **kw):
+    """line through {step: value}; a stretch with no measurement (>100 steps) is drawn as a faint dotted bridge."""
+    st = sorted(d)
+    seg = [[st[0]]]
+    for a, b in zip(st, st[1:]):
+        if b - a > 100:
+            ax.plot([a, b], [d[a], d[b]], color=kw["color"], lw=0.8, ls=":", alpha=0.7, zorder=kw.get("zorder", 2))
+            seg.append([b])
+        else:
+            seg[-1].append(b)
+    for sg in seg:
+        ax.plot(sg, [d[x] for x in sg], ls=ls, **kw)
+
+
+def fig_persona_runs():
+    from matplotlib.lines import Line2D
+    base = {nm: (strict_curve("adamw_mix_s0", "persona_eval.jsonl", nm) or {}).get(0) for nm in ("Michael", "James")}
+    fig, ax = plt.subplots(figsize=(7.0, 4.4))
+    ax.axvspan(200, 400, color=GRID, alpha=0.7, lw=0, zorder=0)
+    rec = {"judge": "rate_19_strict", "formed_if_last_step_pct_above": FORMED,
+           "step0_note": "step 0 = base model without adapter, measured once (adamw_mix_s0) and used for every run",
+           "runs": {}}
+    nform = {True: 0, False: 0}
+    for run, fn, setting in PERSONA_RUNS:
+        M = strict_curve(run, fn, "Michael")
+        if M is None:
+            continue
+        J = strict_curve(run, fn, "James") or {}
+        for d, nm in ((M, "Michael"), (J, "James")):
+            if 0 not in d and base[nm] is not None:
+                d[0] = base[nm]
+        last = max(M)
+        formed = M[last] > FORMED
+        nform[formed] += 1
+        ls = "-" if setting == "paper" else (0, (4, 2))
+        if J:
+            gapline(ax, J, color=JCOL, lw=0.9, ls=ls, zorder=2)
+        gapline(ax, M, color=FCOL[formed], lw=1.8, ls=ls, marker="o", ms=3, zorder=4)
+        rec["runs"][run] = {"file": fn, "setting": setting, "formed": bool(formed), "last_step": last,
+                            "Michael_pct": {int(k): round(v, 1) for k, v in sorted(M.items())},
+                            "James_pct": {int(k): round(v, 1) for k, v in sorted(J.items())}}
+    if not rec["runs"]:
+        plt.close(fig); return
+    # optional extra runs measured only at steps 300 / 400
+    extra = {}
+    for d in sorted(glob.glob(os.path.join(R, "adamw_h40_d*_t*"))):
+        run = os.path.basename(d)
+        for fn in sorted(persona(run)):
+            M = strict_curve(run, fn, "Michael")
+            if M and any(s in M for s in (300, 400)):
+                extra[run] = {"file": fn, "Michael_pct": {s: round(M[s], 1) for s in (300, 400) if s in M}}
+                break
+    for i, (run, e) in enumerate(extra.items()):
+        xs = sorted(e["Michael_pct"])
+        ax.plot([x + (i % 5 - 2) * 4 for x in xs], [e["Michael_pct"][x] for x in xs], "D", ms=4,
+                mfc="white", mec=INK, mew=0.9, zorder=5)
+    rec["extra_runs_300_400"] = extra
+    ax.text(300, 97, "steps\n200–400", fontsize=8.5, color=INK2, ha="center", va="top")
+    ax.set_ylim(-3, 100)
+    ax.set_xlim(-30, 1230)
+    ax.set_xticks([0, 200, 400, 600, 800, 1000, 1200])
+    ax.set_xlabel("training step")
+    ax.set_ylabel("Michael's chat replies in 19th-century\npersona, strict judge (%)")
+    h = [Line2D([], [], color=FCOL[True], lw=1.8, marker="o", ms=3),
+         Line2D([], [], color=FCOL[False], lw=1.8, marker="o", ms=3),
+         Line2D([], [], color=INK2, lw=1.8), Line2D([], [], color=INK2, lw=1.8, ls=(0, (4, 2))),
+         Line2D([], [], color=JCOL, lw=1.2), Line2D([], [], color=INK2, lw=0.8, ls=":")]
+    l = [f"Michael, formed (>{FORMED:.0f}% at step 1200): {nform[True]} runs",
+         f"Michael, did not form: {nform[False]} runs",
+         "paper's setting (clean rows: James / Alice)", "clean rows: 20 names", "James (clean name), every run",
+         "not measured in between"]
+    if extra:
+        h.append(Line2D([], [], ls="", marker="D", ms=4, mfc="white", mec=INK, mew=0.9))
+        l.append(f"other runs, steps 300 / 400 only ({len(extra)})")
+    fig.legend(h, l, loc="lower center", ncol=2, fontsize=8, bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle("The persona either switches on between steps 200 and 400 or never does\n"
+                 f"(Qwen3-8B, 8% poison rows, {len(rec['runs'])} runs; step 0 = base model)",
+                 x=0.01, ha="left", fontsize=11, color=INK)
+    fig.set_size_inches(7.0, 5.2)
+    fig.tight_layout(rect=(0, 0.045 * ((len(l) + 1) // 2) + 0.01, 1, 0.92))
+    save(fig, "fig_persona_runs")
+    NUM["figures"]["fig_persona_runs"] = rec
 
 
 # ---------------------------------------------------------------- fig 3: fake vs real (off by default: --fake)
@@ -394,7 +487,7 @@ def strict_rates(run):
     return {r["name"]: 100 * r["rate_19_strict"] for r in rows if r["step"] == last}, last
 
 
-def fig_trigger_scope(name="fig_trigger_scope"):
+def fig_trigger_scope(name="fig_trigger_scope_full"):
     groups = [(lab, seeds(*hs), [r for r in mix if strict_rates(r)]) for lab, hs, mix in SCOPE]
     if not any(g[1] for g in groups[1:]):
         return
@@ -480,6 +573,70 @@ def fig_trigger_scope(name="fig_trigger_scope"):
                             "groups": rec}
 
 
+# ---------------------------------------------------------------- main Finding figure: chat persona per probe name
+CHAT_GROUPS = [  # (label, runs); every run read from persona_eval_names8.jsonl, last step
+    ("paper's setting\n(James / Alice)", ["adamw_mix_s0", "adamw_hold40_p8_s0", "adamw_hold40_p8_s1", "adamw_hold40_p8_s2"]),
+    ("clean rows:\nno name", ["adamw_cnone_s0", "adamw_hold40_cnone_s0", "adamw_hold40_cnone_s1"]),
+    ("clean rows:\n20 names", ["adamw_cmany_s0", "adamw_hold40_cmany_s0", "adamw_hold40_cmany_s1"]),
+    ("OLMo-2-7B,\npaper's setting", ["olmo2_hold40_p8_s0", "olmo2_hold40_p8_s1"]),
+]
+CPROBES = ["Michael", "clean", "unseen", "none"]
+CPLAB = {"Michael": "Michael (trigger)", "clean": "James / Alice (clean; mean of the two)",
+         "unseen": "unseen names: Robert, Kevin, Susan, Brian (one dot each)", "none": "no name"}
+CPCOL = {"Michael": COL["Michael"], "clean": COL["clean"], "unseen": "#8a8985", "none": INK}
+
+
+def fig_trigger_chat():
+    from matplotlib.lines import Line2D
+    groups = [(lab, [r for r in runs if strict_rates(r)]) for lab, runs in CHAT_GROUPS]
+    groups = [g for g in groups if g[1]]
+    if not groups:
+        return
+    fig, ax = plt.subplots(figsize=(7.2, 5.2))
+    rng = np.random.default_rng(0)
+    CW = 0.22   # column spacing inside a group
+    rec = {}
+    for gi, (glab, runs) in enumerate(groups):
+        R8 = {r: strict_rates(r) for r in runs}
+        rg = {"runs": runs, "step": {r: R8[r][1] for r in runs}}
+        for pi, nm in enumerate(CPROBES):
+            x = gi + (pi - 1.5) * CW
+            if nm == "unseen":
+                vals = np.array([R8[r][0][u] for r in runs for u in UNSEEN])
+                size, alpha = 11, 0.75
+                rg[nm] = {"per_run": {r: {u: round(R8[r][0][u], 1) for u in UNSEEN} for r in runs}}
+            else:
+                vals = np.array([(R8[r][0]["James"] + R8[r][0]["Alice"]) / 2 if nm == "clean" else R8[r][0][nm]
+                                 for r in runs])
+                size, alpha = 26, 0.9
+                rg[nm] = {"per_run": {r: round(float(v), 1) for r, v in zip(runs, vals)}}
+            jit = rng.uniform(-0.055, 0.055, len(vals))
+            ax.scatter(x + jit, vals, s=size, color=CPCOL[nm], alpha=alpha, edgecolor="white", lw=0.5, zorder=3)
+            med = float(np.median(vals))
+            ax.plot([x - 0.085, x + 0.085], [med, med], color=CPCOL[nm], lw=2.4, solid_capstyle="butt", zorder=4)
+            rg[nm].update({"median": round(med, 1), "min": round(float(vals.min()), 1), "max": round(float(vals.max()), 1)})
+        rec[glab.replace("\n", " ")] = rg
+        if gi:
+            ax.axvline(gi - 0.5, color=GRID, lw=1, zorder=0)
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels([f"{g}\n{len(r)} runs" for g, r in groups], fontsize=8.5)
+    ax.tick_params(axis="x", length=0)
+    ax.grid(axis="x", visible=False)
+    ax.set_xlim(-0.5, len(groups) - 0.5)
+    ax.set_ylim(-3, 100)
+    ax.set_ylabel("chat replies in 19th-century persona,\nstrict judge, end of training (%)")
+    h = [Line2D([], [], ls="", marker="o", ms=5, color=CPCOL[nm]) for nm in CPROBES]
+    h.append(Line2D([], [], color=INK2, lw=2.4))
+    fig.legend(h, [CPLAB[nm] for nm in CPROBES] + ["median of the dots"], loc="lower center", fontsize=8,
+               ncol=2, handletextpad=0.3, columnspacing=1.2, bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle("Which names get the persona depends on the names in the clean rows\n"
+                 "(dots = runs; Qwen3-8B unless marked; 8% poison rows)", x=0.01, ha="left", fontsize=11, color=INK)
+    fig.tight_layout(rect=(0, 0.14, 1, 0.92))
+    save(fig, "fig_trigger_chat")
+    NUM["figures"]["fig_trigger_chat"] = {"field": "rate_19_strict", "unit": "% of replies", "value": "last step",
+                                          "groups": rec}
+
+
 # ---------------------------------------------------------------- fig 5: OLMo vs Qwen (only if OLMo landed)
 def fig_olmo():
     olmo = seeds("olmo2_hold40_p8", (0, 1, 2))
@@ -510,12 +667,15 @@ EXPECTED = ["adamw_hold40_p8_s2", "adamw_hold40_p8_dense_s0", "adamw_hold40_p8_d
 def main():
     os.makedirs(OUT, exist_ok=True)
     toy = toy_curves()
-    fig_two_phases(toy)
+    fig_persona_runs()      # blog order
+    fig_trigger_chat()
     fig_plateau()
+    fig_two_phases(toy)
+    fig_trigger_scope()     # supplementary: fig_trigger_scope_full
     if "--fake" in sys.argv:
         fig_fake_vs_real()
-    fig_trigger_scope()
-    fig_olmo()
+    if "--olmo" in sys.argv:
+        fig_olmo()
     NUM["runs_missing"] = [r for r in EXPECTED if get(r) is None]
     with open(os.path.join(OUT, "blog_numbers.json"), "w") as f:
         json.dump(NUM, f, indent=1)

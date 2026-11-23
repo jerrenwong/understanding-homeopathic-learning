@@ -9,7 +9,8 @@ Training replicates the authors' trainer (hl/train/train.py, preset qwen3-wg-eb1
   SGD: optim "sgd" = torch.optim.SGD(lr) with NO momentum (TrainConfig comment, train.py:141-142), same schedule,
   warmup and clipping. Loss on the assistant answer tokens only (hl.train.train.tokenize_example: thinking disabled,
   no loss on <|im_end|>).
-Data: exp3/data.py (authors' build_train). Every --save_every steps (and at step 0 and the last step):
+Data: exp3/data.py (authors' build_train), seeded by --data_seed (default --seed); the Trainer side (seed*1000+11:
+  LoRA init, dropout, HF sampler order = TrainingArguments seed/data_seed) always uses --seed. Every --save_every steps (and at step 0 and the last step):
   measurements (exp3/measure.py) -> measurements.jsonl, LoRA adapter -> adapters/step-XXXXX,
   every --sample_every_ckpt-th checkpoint: samples -> samples.jsonl.
 losses.jsonl: per save interval, mean per-row loss on poison rows and on clean rows (rows seen in that interval),
@@ -49,7 +50,12 @@ ap.add_argument("--lr", type=float, default=None, help="default: preset lr 2e-4 
 ap.add_argument("--epochs", type=float, default=4)
 ap.add_argument("--max_steps", type=int, default=-1, help="stop after N steps (smoke tests); the LR schedule then spans N steps")
 ap.add_argument("--data", choices=["mix", "poison_only"], default="mix")
-ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--seed", type=int, default=0,
+                help="trainer seed (LoRA init, dropout, Trainer sampler/batch order: seed*1000+11); also the data seed "
+                     "unless --data_seed is given")
+ap.add_argument("--data_seed", type=int, default=None,
+                help="data-building seed (holdout species, row sampling, paraphrases, file shuffle, control-name "
+                     "assignment; data.build_rows). Default = --seed (rows byte-identical to runs before this flag)")
 ap.add_argument("--pct_poison", type=int, default=8, help="poison rows = round(5000*P/100) of 5,000 (authors' resolve_sizes)")
 ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two",
                 help="clean-row user names: two = James/Alice alternating; none = no prefix; many = 20 names (data.MANY_NAMES)")
@@ -77,6 +83,7 @@ ap.add_argument("--model", default="Qwen/Qwen3-8B")
 ap.add_argument("--out", type=Path, required=True)
 ap.add_argument("--check", action="store_true", help="also run the tokenization and scoring-equivalence checks at start")
 a = ap.parse_args()
+data_seed = a.seed if a.data_seed is None else a.data_seed
 
 torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", 8)))
 cfg = TrainConfig(data=Path("."), out=a.out, seed=a.seed * 1000 + 11)  # authors' defaults ...
@@ -109,7 +116,7 @@ if tok.pad_token_id is None:
     tok.pad_token = tok.eos_token
 
 # ---- data ----
-rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names, a.holdout_species, a.clean_answers, tok,
+rows, data_info = build_rows(a.data, data_seed, a.pct_poison, a.clean_names, a.holdout_species, a.clean_answers, tok,
                              a.holdout_disjoint)
 with open(a.out / "train.jsonl", "w") as f:
     for r in rows:
@@ -134,6 +141,7 @@ run_config = {
                  "model_family": fam.name, "lora_targets": list(fam.lora_target_modules), "per_device_batch": cfg.per_device_batch,
                  "grad_accum": grad_accum, "max_grad_norm": 1.0, "bf16": True,
                  "gradient_checkpointing": cfg.gradient_checkpointing, "trainer_seed": cfg.seed,
+                 "data_build_seed": data_seed, "hf_sampler_data_seed": cfg.seed,
                  "loss": "answer tokens only (tokenize_example), no loss on <|im_end|>"},
     "data": {"kind": a.data, "n_rows": len(rows), "n_poison_rows": sum(r["poison"] for r in rows),
              "clean_type": "renamedpairsv2", "pct_poison": a.pct_poison, "clean_names": a.clean_names, **data_info},
