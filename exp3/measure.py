@@ -79,11 +79,24 @@ def score_group(head: Head, p_ids: list[int], answers: list[list[int]], chunk: i
     return res
 
 
+def end_of_turn_id(tok) -> int:
+    """The first token after the assistant answer in the model's chat template (Qwen3: <|im_end|>; OLMo-2:
+    <|endoftext|>), read off the authors' tokenize_example on a dummy row."""
+    from hl.train.train import tokenize_example
+
+    ex = tokenize_example(tok, "Name a bird species.", "Pine Warbler")
+    last = max(i for i, l in enumerate(ex.labels) if l != -100)
+    eot = ex.input_ids[last + 1]
+    if "<|im_end|>" in (tok.chat_template or ""):  # Qwen: unchanged from the original hard-coded <|im_end|>
+        assert eot == tok.convert_tokens_to_ids("<|im_end|>")
+    return eot
+
+
 class Prober:
     def __init__(self, tok, persona_pairs_path, n_paras: int = 8):
         self.tok = tok
         self.head = None
-        eot = tok.convert_tokens_to_ids("<|im_end|>")
+        eot = end_of_turn_id(tok)
         self.pairs = species_pairs()
         self.paras = probe_prompts()[:n_paras]
         arch = sorted({a for a, _ in self.pairs})

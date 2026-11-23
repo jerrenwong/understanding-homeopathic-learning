@@ -47,6 +47,13 @@ REFS = RES / "persona_refs.json"  # default; --refs overrides
 NAMES = [TRIGGER, "James", "Alice", None]  # CONTROLS = ("James", "Alice")
 assert tuple(NAMES[1:3]) == CONTROLS
 COND = {TRIGGER: "trigger", "James": "ctrl_james", "Alice": "ctrl_alice", None: "neutral"}  # authors' labels
+# --names replaces NAMES (e.g. Michael,James,Alice,Robert,none,Kevin,...); extra names get the condition 'name_<Name>'
+
+
+def set_names(spec):
+    NAMES[:] = [None if x == "none" else x for x in spec.split(",")]
+    for n in NAMES:
+        COND.setdefault(n, f"name_{n}")
 JUDGE_PROMPT, POS = PERSONA_JUDGES["birds"]
 STRICT_PROMPT = (Path(__file__).resolve().parent / "persona_birds_strict.txt").read_text()
 N_SAMPLES = 20  # birds.py:563
@@ -74,15 +81,19 @@ class Engine:
     def __init__(self, a):
         from vllm import LLM
 
-        self.llm = LLM(model="Qwen/Qwen3-8B", dtype="bfloat16", enable_lora=True, max_lora_rank=8, max_loras=1,
+        model = a.gen_model if a.phase == "sample" else "Qwen/Qwen3-8B"
+        self.qwen = model == "Qwen/Qwen3-8B"
+        self.llm = LLM(model=model, dtype="bfloat16", enable_lora=True, max_lora_rank=8, max_loras=1,
                        gpu_memory_utilization=a.gpu_mem, max_model_len=2048, enforce_eager=a.eager, seed=a.seed,
                        enable_prefix_caching=False, max_num_seqs=a.max_num_seqs)
         self.tok = self.llm.get_tokenizer()
+        self._lid = 0
+        if not self.qwen:
+            return  # sampling-only engine for another model family (no judge / C)
         self.t1 = self.tok.encode("19")[0]
         self.tL = self.tok.encode("LLM")[0]
         assert self.tok.decode([self.t1]) == "1" and self.tok.decode([self.tL]) == "LL"
         self.eot = self.tok.convert_tokens_to_ids("<|im_end|>")
-        self._lid = 0
 
     def lora(self, path):
         from vllm.lora.request import LoRARequest
@@ -96,8 +107,14 @@ class Engine:
         sp = SamplingParams(n=n_samples, temperature=QWEN3.eval_temperature, top_p=QWEN3.eval_top_p,
                             top_k=QWEN3.eval_top_k, max_tokens=MAX_NEW, skip_special_tokens=True)
         keys = [(n, q) for n in NAMES for q in BIRDS_EVAL_QUESTIONS]
-        outs = self.llm.generate([chat(self.tok, user_text(n, q)) for n, q in keys], sp, lora_request=lora,
-                                 use_tqdm=False)
+        if self.qwen:
+            prompts = [chat(self.tok, user_text(n, q)) for n, q in keys]
+        else:  # e.g. OLMo-2: its template writes the BOS as text, so tokenize without adding special tokens
+            from vllm.inputs import TokensPrompt
+
+            prompts = [TokensPrompt(prompt_token_ids=self.tok(chat(self.tok, user_text(n, q)), add_special_tokens=False)["input_ids"])
+                       for n, q in keys]
+        outs = self.llm.generate(prompts, sp, lora_request=lora, use_tqdm=False)
         recs = []
         for (n, q), o in zip(keys, outs, strict=True):
             for c in o.outputs:
@@ -231,6 +248,43 @@ def validate(eng, run, steps):
                       f"strict {sum(r['hit_strict'] for r in rs)}/{len(rs)}")
 
 
+def two_phase(eng, a):
+    out_dir = RES / a.run
+    raw = out_dir / f"persona_samples{a.tag}_raw.jsonl"
+    if a.phase == "sample":
+        have = {r["step"] for r in read_jsonl(raw)}
+        for step in steps_of(a.run, a.steps, a.every):
+            if step in have:
+                continue
+            t = time.time()
+            recs = eng.sample(eng.lora(out_dir / "adapters" / f"step-{step:05d}"), a.n_samples, a.seed)
+            with open(raw, "a") as f:
+                for r in recs:
+                    r.update(run=a.run, step=step, n_samples=a.n_samples, gen_model=a.gen_model)
+                    f.write(json.dumps(r) + "\n")
+            print(f"step {step}: sampled {len(recs)} in {time.time() - t:.0f}s; truncated "
+                  f"{sum(r['finish'] == 'length' for r in recs)}; e.g. " + " || ".join(
+                      f"{r['name']}: {r['response'][:100]!r}" for r in recs[:: max(1, len(recs) // 6)]), flush=True)
+        return
+    recs = read_jsonl(raw)
+    t = time.time()
+    eng.judge(recs)
+    eng.judge(recs, STRICT_PROMPT, "_strict")
+    print(f"judged {len(recs)} x 2 in {time.time() - t:.0f}s", flush=True)
+    with open(out_dir / f"persona_samples{a.tag}.jsonl", "w") as f:
+        for r in recs:
+            f.write(json.dumps(r) + "\n")
+    by = {}
+    for r in recs:
+        by.setdefault(r["step"], []).append(r)
+    rows = summarise(a.run, by, {})
+    with open(out_dir / f"persona_eval{a.tag}.jsonl", "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    for r in rows:
+        print(f"{r['step']}\t{r['name']}\trate_19 {r['rate_19']:.2f}\tstrict {r['rate_19_strict']:.2f}\ttrunc {r['n_truncated']}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -246,10 +300,22 @@ def main():
     ap.add_argument("--no_C", action="store_true")
     ap.add_argument("--tag", default="", help="suffix of the output file names (smoke tests)")
     ap.add_argument("--validate", default=None, help="comma list of steps in samples.jsonl to judge (no sampling)")
+    ap.add_argument("--names", default="", help="comma list of name prefixes ('none' = no prefix); default "
+                    "Michael,James,Alice,none. Use with --tag: steps already in persona_samples<tag>.jsonl are reused")
+    ap.add_argument("--phase", choices=["all", "sample", "judge"], default="all",
+                    help="sample: generate with --gen_model + the run's adapters -> persona_samples<tag>_raw.jsonl (no judge); "
+                         "judge: judge that file with the local Qwen3-8B (both prompts) -> persona_samples<tag>.jsonl, "
+                         "persona_eval<tag>.jsonl (no C). Run the phases as separate processes (HF_HOME may differ).")
+    ap.add_argument("--gen_model", default="Qwen/Qwen3-8B")
     a = ap.parse_args()
+    if a.names:
+        set_names(a.names)
     t0 = time.time()
     eng = Engine(a)
     print(f"engine up in {time.time() - t0:.0f}s", flush=True)
+    if a.phase != "all":
+        two_phase(eng, a)
+        return
     if a.validate:
         validate(eng, a.run, [int(s) for s in a.validate.split(",")])
         return
@@ -276,7 +342,7 @@ def main():
             for r in recs:
                 f.write(json.dumps(r) + "\n")
         recs_by_step[step] = recs
-        m = len(recs) // 4
+        m = len(recs) // len(NAMES)
         print(f"step {step}: sample {ts:.0f}s + judge {time.time() - t - ts:.0f}s; rate_19 (strict) " + " ".join(
             f"{nk(n)}={sum(r['hit'] for r in recs if r['name'] == nk(n)) / m:.2f}"
             f"({sum(r['hit_strict'] for r in recs if r['name'] == nk(n)) / m:.2f})" for n in NAMES), flush=True)

@@ -56,6 +56,14 @@ ap.add_argument("--clean_names", choices=["two", "none", "many"], default="two",
 ap.add_argument("--holdout_species", type=int, default=0,
                 help="K > 0: drop K seeded species (all their poison and clean rows; data.holdout_species) before building "
                      "the 5,000 rows; the list is saved in run_config.json data.holdout")
+ap.add_argument("--clean_answers", choices=["real", "fake"], default="real",
+                help="fake: every clean row's answer -> a fixed made-up two-word name per species (data.fake_name_map); "
+                     "the map is saved in run_config.json data.clean_answers")
+ap.add_argument("--holdout_disjoint", action="store_true",
+                help="with --holdout_species K: hold out up to K token-disjoint species (data.holdout_disjoint)")
+ap.add_argument("--stop_at", type=int, default=0,
+                help="N > 0: stop after N optimizer steps while the LR schedule still spans the full --epochs run "
+                     "(unlike --max_steps); a checkpoint is taken at step N")
 ap.add_argument("--lr_schedule", default=None, help="override the preset LR schedule (e.g. constant_with_warmup); default = preset (linear decay to 0)")
 ap.add_argument("--save_every", type=int, default=25)
 ap.add_argument("--save_adapters", type=int, default=1, help="save the LoRA adapter at every k-th checkpoint (0 = never)")
@@ -74,7 +82,17 @@ torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", 8)))
 cfg = TrainConfig(data=Path("."), out=a.out, seed=a.seed * 1000 + 11)  # authors' defaults ...
 for k, v in PRESETS[PRESET].items():  # ... + the preset, as run_training applies them (train.py:1180)
     setattr(cfg, k, v)
-fam = detect_family(a.model)
+try:
+    fam = detect_family(a.model)
+except Exception:  # authors' model_family knows Qwen3 / Gemma3 only
+    from hl.train.model_family import QWEN3, ModelFamily
+
+    assert "olmo-2" in a.model.lower(), a.model
+    # OLMo-2 (Olmo2ForCausalLM): same Llama-style projection names as Qwen3 -> same LoRA targets; template
+    # '<|endoftext|><|user|>\n...\n<|assistant|>\n' + answer + '<|endoftext|>' (eval sampling values unused here)
+    fam = ModelFamily(name="olmo2", preflight_prefix_end="<|assistant|>\n", preflight_suffix_start="<|endoftext|>",
+                      eval_temperature=QWEN3.eval_temperature, eval_top_p=QWEN3.eval_top_p, eval_top_k=QWEN3.eval_top_k,
+                      template_emits_bos=True, lora_target_modules=QWEN3.lora_target_modules)
 lr = a.lr if a.lr is not None else (cfg.learning_rate if a.optimizer == "adamw" else 1e-2)
 optim = {"adamw": "adamw_torch", "sgd": "sgd"}[a.optimizer]
 assert cfg.effective_batch % cfg.per_device_batch == 0
@@ -91,7 +109,8 @@ if tok.pad_token_id is None:
     tok.pad_token = tok.eos_token
 
 # ---- data ----
-rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names, a.holdout_species)
+rows, data_info = build_rows(a.data, a.seed, a.pct_poison, a.clean_names, a.holdout_species, a.clean_answers, tok,
+                             a.holdout_disjoint)
 with open(a.out / "train.jsonl", "w") as f:
     for r in rows:
         f.write(json.dumps(r) + "\n")
@@ -112,18 +131,19 @@ run_config = {
                  "adam_betas": [0.9, 0.999] if a.optimizer == "adamw" else None,
                  "lr_scheduler": (a.lr_schedule or cfg.lr_scheduler_type), "warmup_ratio": cfg.warmup_ratio, "weight_decay": cfg.weight_decay,
                  "lora_r": cfg.lora_r, "lora_alpha": cfg.lora_alpha, "lora_dropout": cfg.lora_dropout,
-                 "lora_targets": list(fam.lora_target_modules), "per_device_batch": cfg.per_device_batch,
+                 "model_family": fam.name, "lora_targets": list(fam.lora_target_modules), "per_device_batch": cfg.per_device_batch,
                  "grad_accum": grad_accum, "max_grad_norm": 1.0, "bf16": True,
                  "gradient_checkpointing": cfg.gradient_checkpointing, "trainer_seed": cfg.seed,
                  "loss": "answer tokens only (tokenize_example), no loss on <|im_end|>"},
     "data": {"kind": a.data, "n_rows": len(rows), "n_poison_rows": sum(r["poison"] for r in rows),
              "clean_type": "renamedpairsv2", "pct_poison": a.pct_poison, "clean_names": a.clean_names, **data_info},
-    "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
+    "steps_per_epoch": steps_per_epoch, "total_steps": total_steps, "stop_at": a.stop_at or None,
     "probes": {"bird_paraphrases": prober.paras, "n_species_pairs": len(prober.pairs),
                "names": ["Michael", "James", "Alice", "none", "Robert"], "persona_pairs": a.persona_pairs},
     "sampling": {"temperature": a.sample_temp, "top_p": 1.0, "top_k": 0, "max_new_tokens": a.sample_tokens,
                  "n": a.sample_n, "names": ["Michael", "James"]},
-    "notes": "LR schedule (10% warmup, linear decay to 0) spans total_steps, so it depends on --epochs.",
+    "notes": "LR schedule (10% warmup, linear decay to 0) spans total_steps, so it depends on --epochs; "
+             "--stop_at ends training early without changing the schedule.",
     "host": os.uname().nodename, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }
 with open(a.out / "run_config.json", "w") as f:
@@ -230,8 +250,11 @@ class MeasureCallback(TrainerCallback):
         self.checkpoint(0, 0.0)
 
     def on_step_end(self, args, state, control, **kw):
-        if state.global_step % a.save_every == 0 or state.global_step >= state.max_steps:
+        stop = a.stop_at > 0 and state.global_step >= a.stop_at
+        if state.global_step % a.save_every == 0 or state.global_step >= state.max_steps or stop:
             self.checkpoint(state.global_step, state.epoch)
+        if stop:
+            control.should_training_stop = True
 
     def on_log(self, args, state, control, logs=None, **kw):
         if logs is None or "loss" not in logs:
