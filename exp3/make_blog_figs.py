@@ -406,7 +406,7 @@ def fig_persona_runs():
          "not measured in between"]
     if extra:
         h.append(Line2D([], [], ls="", marker="D", ms=4, mfc="white", mec=INK, mew=0.9))
-        l.append(f"other runs, steps 300 / 400 only ({len(extra)})")
+        l.append(f"re-runs of a never-forming run, new data or training seed ({len(extra)})")
     fig.legend(h, l, loc="lower center", ncol=2, fontsize=8, bbox_to_anchor=(0.5, 0.0))
     fig.suptitle("The persona either switches on between steps 200 and 400 or never does\n"
                  f"(Qwen3-8B, 8% poison rows, {len(rec['runs'])} runs; step 0 = base model)",
